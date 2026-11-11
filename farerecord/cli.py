@@ -28,32 +28,26 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    from farerecord.collector import collect, is_due
-    from farerecord.sources.ctrip_calendar import CtripCalendarSource
+    from farerecord.collector import CollectionNotDue, collect_and_alert
 
     cfg = load_config(args.config)
     if not cfg.routes:
         print("config 里没有配置航线（routes）。")
         return 2
     conn = db.connect(cfg.database)
-    if args.if_due and not is_due(conn, cfg.collector.interval_minutes):
-        print(f"距离上次抓取不到 {cfg.collector.interval_minutes} 分钟，跳过。")
-        conn.close()
-        return 0
-    source = CtripCalendarSource(timeout=cfg.collector.timeout_seconds)
     try:
-        res = collect(conn, cfg, source)
+        res = collect_and_alert(conn, cfg, if_due=args.if_due, alerts=not args.no_alerts)
+    except CollectionNotDue:
+        print(f"距离上次抓取不到 {cfg.collector.interval_minutes} 分钟，跳过。")
+        return 0
     finally:
-        source.close()
+        conn.close()
     labels = {"ok": "成功", "partial": "部分成功", "failed": "失败"}
     print(f"抓取{labels[res.status]}：共 {res.n_quotes} 条报价（run #{res.run_id}）")
     for key, n in res.per_route.items():
         print(f"  {key}: {n} 条")
     for err in res.errors:
         print(f"  ⚠ {err}")
-    if not args.no_alerts:
-        _run_alerts(conn, cfg, res)
-    conn.close()
     return 0 if res.status != "failed" else 1
 
 
@@ -138,6 +132,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_app(args: argparse.Namespace) -> int:
+    from farerecord.desktop import DesktopUnavailable, run
+
+    try:
+        return run(load_config(args.config))
+    except DesktopUnavailable as exc:
+        print(exc)
+        return 2
+
+
 def cmd_notify_test(args: argparse.Namespace) -> int:
     from farerecord.alerts import send_test
 
@@ -150,12 +154,6 @@ def cmd_notify_test(args: argparse.Namespace) -> int:
         return 2
     print(f"已发送到 {n.label}" if ok else "发送失败，查看上面的错误信息。")
     return 0 if ok else 1
-
-
-def _run_alerts(conn, cfg, res) -> None:
-    from farerecord.alerts import run_after_collect
-
-    run_after_collect(conn, cfg, res)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -189,7 +187,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("notify-test", help="发送一条测试提醒")
     s.set_defaults(func=cmd_notify_test)
 
-    s = sub.add_parser("serve", help="启动网页看板")
+    s = sub.add_parser("app", help="打开桌面窗口（开着时按间隔自动抓取）")
+    s.set_defaults(func=cmd_app)
+
+    s = sub.add_parser("serve", help="启动网页看板（浏览器里看）")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--open", action="store_true", help="启动后自动打开浏览器")

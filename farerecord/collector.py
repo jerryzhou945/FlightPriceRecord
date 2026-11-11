@@ -129,13 +129,20 @@ def collect(
     cfg: AppConfig,
     source: PriceSource,
     *,
+    if_due: bool = False,
     today: date | None = None,
     now: Callable[[], str] = repo.utcnow_iso,
     sleep: Callable[[float], None] = time.sleep,
 ) -> CollectResult:
     today = today or today_cst()
     interval = cfg.collector.request_interval_seconds
-    run_id = repo.start_run(conn, source.name, now())
+    with conn:
+        if if_due:
+            # 在同一个写事务里检查时间并创建记录，另一进程只能看到提交后的结果。
+            conn.execute("BEGIN IMMEDIATE")
+            if not is_due(conn, cfg.collector.interval_minutes):
+                raise CollectionNotDue
+        run_id = repo.start_run(conn, source.name, now())
     result = CollectResult(run_id=run_id, status="failed")
     first_call = True
 
@@ -218,6 +225,9 @@ def collect_and_alert(
     conn: sqlite3.Connection,
     cfg: AppConfig,
     source_factory: Callable[[AppConfig], PriceSource] | None = None,
+    *,
+    if_due: bool = False,
+    alerts: bool = True,
 ) -> CollectResult:
     """抓取一次并评估提醒。网页“立即抓取”、桌面端定时器共用。"""
     if source_factory is None:
@@ -227,12 +237,13 @@ def collect_and_alert(
     else:
         source = source_factory(cfg)
     try:
-        result = collect(conn, cfg, source)
+        result = collect(conn, cfg, source, if_due=if_due)
     finally:
         close = getattr(source, "close", None)
         if close:
             close()
     from farerecord.alerts import run_after_collect
 
-    run_after_collect(conn, cfg, result)
+    if alerts:
+        run_after_collect(conn, cfg, result)
     return result

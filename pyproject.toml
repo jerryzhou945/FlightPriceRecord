@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "farerecord"
-version = "0.1.0"
-description = "航价记：携程机票价格记录、弹性行程比价与微信低价提醒"
+version = "0.2.0"
+description = "航价记：携程机票价格记录、弹性行程比价与低价提醒（桌面端）"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+desktop = ["pywebview>=5"]
 
 [project.scripts]
 farerecord = "farerecord.cli:main"
