@@ -13,7 +13,7 @@ import yaml
 from farerecord.airlines import DEFAULT_AIRLINES, normalize_codes
 
 ROOT = Path(__file__).resolve().parent.parent
-MIN_INTERVAL_MINUTES = 30  # 定时抓取的最短间隔，避免对携程造成压力
+MIN_INTERVAL_MINUTES = 15  # 定时抓取的最短间隔，避免对携程造成压力
 
 
 @dataclass
@@ -52,11 +52,13 @@ class AlertConfig:
 class CollectorConfig:
     request_interval_seconds: float = 3.0
     timeout_seconds: float = 25.0
-    interval_minutes: int = 60  # 定时抓取间隔；不低于 MIN_INTERVAL_MINUTES
+    interval_minutes: int = 30  # 定时抓取间隔；不低于 MIN_INTERVAL_MINUTES
     airlines: list[str] = field(
         default_factory=lambda: list(DEFAULT_AIRLINES)
     )  # 空列表 = 不识别航司
-    airline_lookups: int = 8  # 每次抓取、每个方向最多额外查几家航司
+    airline_lookups: int = 8  # 每次识别、每个方向最多额外查几家航司
+    airline_refresh_minutes: int = 120  # 航司多久重新识别一次（抓取可以比它频繁）
+    retention_days: int = 30  # 只保留最近这么多天的抓取；0 = 不清理
 
 
 @dataclass
@@ -66,6 +68,11 @@ class AppConfig:
     alerts: AlertConfig = field(default_factory=AlertConfig)
     collector: CollectorConfig = field(default_factory=CollectorConfig)
     source_file: Path | None = None
+
+    @property
+    def env_file(self) -> Path | None:
+        """密钥所在的 .env（和配置文件同目录）。"""
+        return self.source_file.parent / ".env" if self.source_file else None
 
     def route(self, origin: str, dest: str) -> RouteConfig | None:
         for r in self.routes:
@@ -106,6 +113,11 @@ def parse_quiet_hours(v: Any) -> tuple[time, time] | None:
     return _hhmm(start), _hhmm(end)
 
 
+def clamp_interval(value: Any) -> int:
+    """抓取间隔（分钟）：缺省 30，最短 MIN_INTERVAL_MINUTES，最长一天。"""
+    return min(1440, max(MIN_INTERVAL_MINUTES, int(value or 30)))
+
+
 def parse_config(data: dict[str, Any], root: Path = ROOT) -> AppConfig:
     routes = []
     for r in data.get("routes") or []:
@@ -142,9 +154,11 @@ def parse_config(data: dict[str, Any], root: Path = ROOT) -> AppConfig:
         collector=CollectorConfig(
             request_interval_seconds=float(c.get("request_interval_seconds", 3)),
             timeout_seconds=float(c.get("timeout_seconds", 25)),
-            interval_minutes=max(MIN_INTERVAL_MINUTES, int(c.get("interval_minutes", 60) or 60)),
+            interval_minutes=clamp_interval(c.get("interval_minutes")),
             airlines=normalize_codes(c.get("airlines")),
             airline_lookups=max(0, min(20, int(c.get("airline_lookups", 8)))),
+            airline_refresh_minutes=max(0, int(c.get("airline_refresh_minutes", 120))),
+            retention_days=max(0, int(c.get("retention_days", 30))),
         ),
     )
 

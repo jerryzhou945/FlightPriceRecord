@@ -171,6 +171,39 @@ class WxPusherNotifier:
             raise NotifyError(f"WxPusher 返回错误：{data.get('msg')}")
 
 
+class WxPusherSimpleNotifier:
+    """WxPusher 极简推送：微信扫码拿到一个 SPT 就能给自己发消息，不用创建应用。"""
+
+    name = "wxpusher"
+    label = "WxPusher 微信"
+    URL = "https://wxpusher.zjiecode.com/api/send/message/simple-push"
+    QR_URL = (  # 官方文档里的永久二维码：微信扫它获取 SPT
+        "https://wxpusher.zjiecode.com/api/qrcode/"
+        "RwjGLMOPTYp35zSYQr0HxbCPrV9eU0wKVBXU1D5VVtya0cQXEJWPjqBdW3gKLifS.jpg"
+    )
+
+    def __init__(self, spt: str | None, client: httpx.Client | None = None) -> None:
+        self.spt = spt
+        self._client = client or httpx.Client(timeout=15)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.spt)
+
+    def send(self, title: str, content: str, url: str | None = None) -> None:
+        if not self.configured:
+            raise NotifyError("没有配置 WXPUSHER_SPT")
+        payload = {"spt": self.spt, "content": content, "summary": title[:95], "contentType": 3}
+        if url:
+            payload["url"] = url
+        try:
+            data = self._client.post(self.URL, json=payload).json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise NotifyError(f"WxPusher 请求失败：{exc.__class__.__name__}") from exc
+        if not data.get("success") and data.get("code") != 1000:
+            raise NotifyError(f"WxPusher 返回错误：{data.get('msg')}")
+
+
 class PushPlusNotifier:
     """https://www.pushplus.plus ：登录后复制 token。"""
 
@@ -232,6 +265,8 @@ def make_notifier(channel: str) -> Notifier:
     """微信通道（或控制台）。"""
     channel = (channel or "console").lower()
     if channel == "wxpusher":
+        if os.environ.get("WXPUSHER_SPT"):  # 极简推送优先：只有一个口令
+            return WxPusherSimpleNotifier(os.environ["WXPUSHER_SPT"])
         uids = os.environ.get("WXPUSHER_UID", "").replace(";", ",").split(",")
         return WxPusherNotifier(os.environ.get("WXPUSHER_APP_TOKEN"), [u.strip() for u in uids])
     if channel == "pushplus":

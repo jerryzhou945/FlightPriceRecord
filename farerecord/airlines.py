@@ -86,6 +86,93 @@ NAMES = {
 }
 
 
+# 中文简称：日历格子、表格里地方小，用两三个字
+SHORT = {
+    "3U": "川航",
+    "9C": "春秋",
+    "AA": "美航",
+    "AC": "加航",
+    "AF": "法航",
+    "AS": "阿拉斯加",
+    "AY": "芬航",
+    "BA": "英航",
+    "BR": "长荣",
+    "CA": "国航",
+    "CI": "华航",
+    "CX": "国泰",
+    "CZ": "南航",
+    "DL": "达美",
+    "EK": "阿联酋",
+    "ET": "埃航",
+    "EY": "阿提哈德",
+    "FM": "上航",
+    "HO": "吉祥",
+    "HU": "海航",
+    "HX": "港航",
+    "JL": "日航",
+    "JX": "星宇",
+    "KE": "大韩",
+    "KL": "荷航",
+    "LH": "汉莎",
+    "MF": "厦航",
+    "MH": "马航",
+    "MU": "东航",
+    "NH": "全日空",
+    "NZ": "新西兰航",
+    "OZ": "韩亚",
+    "PR": "菲航",
+    "QF": "澳航",
+    "QR": "卡塔尔",
+    "SC": "山航",
+    "SQ": "新航",
+    "TG": "泰航",
+    "TK": "土航",
+    "UA": "美联航",
+    "VN": "越航",
+    "WS": "西捷",
+    "ZH": "深航",
+}
+
+# 代表色：接近各家涂装的主色，界面上做成小色标方便一眼认出（不使用航司商标图案）
+COLORS = {
+    "AA": "#2a6fb8",
+    "AC": "#c9302c",
+    "AF": "#1f3f8f",
+    "BA": "#27408b",
+    "BR": "#1e7a4a",
+    "CA": "#c0392b",
+    "CI": "#b55a8a",
+    "CX": "#0f6f6a",
+    "CZ": "#1c8fd0",
+    "DL": "#b7213b",
+    "EK": "#c8342b",
+    "HU": "#c1272d",
+    "JL": "#b8242c",
+    "JX": "#8a6a3a",
+    "KE": "#4a9fd8",
+    "KL": "#2a9fd6",
+    "LH": "#1d3a6b",
+    "MF": "#2b7fc4",
+    "MU": "#24479c",
+    "NH": "#1b4a9a",
+    "OZ": "#7b7168",
+    "PR": "#2c4a9a",
+    "QR": "#6a1039",
+    "SQ": "#b58a2a",
+    "TK": "#c81f2f",
+    "UA": "#24509e",
+}
+DEFAULT_COLOR = "#6b7190"
+
+
+def airline_short(code: str | None) -> str | None:
+    """航司二字码 → 中文简称；没有简称时用全称，再没有就用代码。"""
+    if not code:
+        return None
+    code = code.upper()
+    return SHORT.get(code) or NAMES.get(code, code)
+
+
 def airline_name(code: str | None) -> str | None:
     """航司二字码 → 中文名；不认识的代码原样返回。"""
     if not code:
@@ -101,6 +188,8 @@ def airline_json(quote: OnewayQuote | None) -> dict[str, Any] | None:
     return {
         "code": quote.airline,
         "name": airline_name(quote.airline),
+        "short": airline_short(quote.airline),
+        "color": COLORS.get(quote.airline.upper(), DEFAULT_COLOR),
         "exact": exact,
         "price": None if exact else quote.airline_price,
     }

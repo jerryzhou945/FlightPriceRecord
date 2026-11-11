@@ -222,6 +222,68 @@ def runs_with_route(conn: sqlite3.Connection, origin: str, dest: str) -> list[tu
     return [(r["run_id"], r["t"]) for r in rows]
 
 
+def oneway_by_run(
+    conn: sqlite3.Connection, origin: str, dest: str, first: date, last: date
+) -> dict[int, dict[date, float]]:
+    """出发日在 [first, last] 内的全部报价，按抓取分组：{run_id: {出发日: 价格}}。"""
+    rows = conn.execute(
+        "SELECT run_id, depart_date, price FROM oneway_quote "
+        "WHERE origin=? AND dest=? AND depart_date BETWEEN ? AND ?",
+        (origin, dest, first.isoformat(), last.isoformat()),
+    )
+    runs: dict[int, dict[date, float]] = {}
+    days: dict[str, date] = {}
+    for run_id, day, price in rows:
+        d = days.get(day)
+        if d is None:
+            d = days[day] = date.fromisoformat(day)
+        runs.setdefault(run_id, {})[d] = price
+    return runs
+
+
+def roundtrip_at_run(
+    conn: sqlite3.Connection, run_id: int, origin: str, dest: str
+) -> dict[tuple[date, date], float]:
+    rows = conn.execute(
+        "SELECT depart_date, return_date, price FROM rt_quote "
+        "WHERE run_id=? AND origin=? AND dest=?",
+        (run_id, origin, dest),
+    )
+    return {
+        (date.fromisoformat(r["depart_date"]), date.fromisoformat(r["return_date"])): r["price"]
+        for r in rows
+    }
+
+
+def save_calibration(
+    conn: sqlite3.Connection, run_id: int, origin: str, dest: str, ratio: float, samples: int
+) -> None:
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO rt_calibration VALUES (?, ?, ?, ?, ?)",
+            (run_id, origin, dest, ratio, samples),
+        )
+
+
+def recent_calibrations(
+    conn: sqlite3.Connection, origin: str, dest: str, limit: int
+) -> list[tuple[float, int]]:
+    """最近 limit 次抓取的 (往返校准比例, 样本数)。"""
+    rows = conn.execute(
+        "SELECT ratio, samples FROM rt_calibration WHERE origin=? AND dest=? "
+        "ORDER BY run_id DESC LIMIT ?",
+        (origin, dest, limit),
+    )
+    return [(r["ratio"], r["samples"]) for r in rows]
+
+
+def prune_runs(conn: sqlite3.Connection, before: str) -> int:
+    """删除 before（UTC ISO）之前的抓取及其报价，返回删掉的抓取次数。"""
+    with conn:
+        cur = conn.execute("DELETE FROM fetch_run WHERE started_at < ?", (before,))
+    return cur.rowcount
+
+
 def oneway_at_run(
     conn: sqlite3.Connection, run_id: int, origin: str, dest: str
 ) -> dict[date, float]:
@@ -260,6 +322,18 @@ def add_manual_quote(
             ),
         )
     return int(cur.lastrowid)
+
+
+def recent_manual_quotes(
+    conn: sqlite3.Connection, origin: str, dest: str, since: str
+) -> list[dict[str, Any]]:
+    """since（UTC ISO）之后手动录入的真实往返价。"""
+    rows = conn.execute(
+        "SELECT * FROM manual_quote WHERE origin=? AND dest=? AND observed_at >= ? "
+        "ORDER BY observed_at",
+        (origin, dest, since),
+    )
+    return [dict(r) for r in rows]
 
 
 def manual_quotes(

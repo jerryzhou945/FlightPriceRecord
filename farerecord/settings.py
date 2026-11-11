@@ -11,10 +11,11 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
-from farerecord.config import AppConfig, parse_quiet_hours
+from farerecord.config import AppConfig, clamp_interval, parse_quiet_hours
 
 # 界面可改的提醒设置：键 → 允许的类型
 ALERT_KEYS: dict[str, type | tuple[type, ...]] = {
+    "channel": str,
     "desktop": bool,
     "new_low": bool,
     "drop_percent": (int, float),
@@ -22,6 +23,7 @@ ALERT_KEYS: dict[str, type | tuple[type, ...]] = {
     "quiet_hours": str,
 }
 TARGET_PREFIX = "target_price:"
+INTERVAL_KEY = "collector.interval_minutes"
 
 
 def load(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -57,4 +59,7 @@ def effective_config(conn: sqlite3.Connection, cfg: AppConfig) -> AppConfig:
         else r
         for r in cfg.routes
     ]
-    return replace(cfg, alerts=replace(cfg.alerts, **changes), routes=routes)
+    collector = cfg.collector
+    if INTERVAL_KEY in stored:
+        collector = replace(collector, interval_minutes=clamp_interval(stored[INTERVAL_KEY]))
+    return replace(cfg, alerts=replace(cfg.alerts, **changes), routes=routes, collector=collector)

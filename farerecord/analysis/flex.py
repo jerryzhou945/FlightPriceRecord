@@ -69,8 +69,9 @@ def search(
     back: dict[date, float],
     query: FlexQuery,
     rt: dict[tuple[date, date], float] | None = None,
+    ratio: float = 1.0,
 ) -> FlexResult:
-    """out：去程每天单程价；back：回程每天单程价；rt：往返缓存（可选）。"""
+    """out：去程每天单程价；back：回程每天单程价；rt：往返缓存（可选）；ratio：往返校准比例。"""
     rt = rt or {}
     trips: list[Trip] = []
     best = best_ideal = None
@@ -85,7 +86,7 @@ def search(
             b = back.get(r)
             if not b:
                 continue
-            t = Trip(d, r, o, b, rt.get((d, r)))
+            t = Trip(d, r, o, b, rt.get((d, r)), ratio)
             trips.append(t)
             ideal = query.ideal_days
             best = _min(best, t, ideal)

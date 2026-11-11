@@ -13,6 +13,7 @@ from collections.abc import Callable
 from farerecord import db
 from farerecord.collector import CollectionNotDue, CollectResult, collect_and_alert, is_due
 from farerecord.config import AppConfig
+from farerecord.settings import effective_config
 from farerecord.sources.base import PriceSource
 
 log = logging.getLogger(__name__)
@@ -42,7 +43,8 @@ class CollectScheduler:
         try:
             conn = db.connect(self.cfg.database)
             try:
-                if not is_due(conn, self.cfg.collector.interval_minutes):
+                interval = effective_config(conn, self.cfg).collector.interval_minutes
+                if not is_due(conn, interval):
                     return None
                 return collect_and_alert(conn, self.cfg, self.source_factory, if_due=True)
             except CollectionNotDue:

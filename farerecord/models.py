@@ -42,13 +42,19 @@ class RoundtripQuote:
 
 @dataclass(frozen=True, slots=True)
 class Trip:
-    """一个去回组合。price 为估价（去程单程 + 回程单程），rt_price 为真实往返价（如有）。"""
+    """一个去回组合。
+
+    price：去程单程 + 回程单程，分开买两张票一定买得到的价格。
+    estimate：往返预估 = price × ratio（往返票通常比两张单程便宜，ratio 见 analysis/calibration）。
+    rt_price：携程往返缓存里的真实往返价（只有短途组合才有）。
+    """
 
     depart_date: date
     return_date: date
     out_price: float
     ret_price: float
     rt_price: float | None = None
+    ratio: float = 1.0
 
     @property
     def days(self) -> int:
@@ -59,9 +65,18 @@ class Trip:
         return self.out_price + self.ret_price
 
     @property
-    def best_price(self) -> float:
-        """估价和真实往返价里更低的那个。"""
+    def estimate(self) -> float:
+        return float(round(self.price * self.ratio))
+
+    @property
+    def raw_price(self) -> float:
+        """不含校准的价格：两张单程和真实往返价里更低的。提醒去重用它，不受校准比例变化影响。"""
         return min(self.price, self.rt_price) if self.rt_price else self.price
+
+    @property
+    def best_price(self) -> float:
+        """界面和提醒用的价格：有真实往返价就用真实的（和两张单程取低），否则用往返预估。"""
+        return self.raw_price if self.rt_price else self.estimate
 
 
 @dataclass(frozen=True, slots=True)

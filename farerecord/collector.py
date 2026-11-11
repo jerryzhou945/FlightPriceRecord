@@ -12,6 +12,8 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TypeVar
 
 from farerecord import repository as repo
+from farerecord import settings
+from farerecord.analysis import calibration
 from farerecord.config import AppConfig, RouteConfig
 from farerecord.models import OnewayQuote
 from farerecord.sources.base import PriceSource, RetryableSourceError, SourceError
@@ -97,7 +99,8 @@ def attribute_airlines(
                     best[d] = candidate
         need = {d for d in need if d not in best or not best[d].airline_exact}
     else:
-        for d in need:
+        # max_lookups 为 0 表示这次不查（还没到重新识别的时间），不能把没查的记成"查过了"
+        for d in need if max_lookups > 0 else ():
             if d not in best:
                 best[d] = replace(lowest[d], airline="")
     return [best.get(q.depart_date, q) for q in quotes]
@@ -175,19 +178,30 @@ def collect(
             return 0
         quotes = [q for q in quotes if q.depart_date >= today]
         if candidates and cfg.collector.airline_lookups > 0:
+            failed = False
 
             def lookup(code: str) -> dict[date, float] | None:
+                nonlocal failed
                 rows = call(f"{o}→{d} 航司 {code}", lambda: by_airline(o, d, today, code))
+                failed = failed or rows is None
                 return None if rows is None else {q.depart_date: q.price for q in rows}
 
+            # 抓取可以很频繁，航司隔一段时间才重新识别；没到时间就只沿用价格没变的结果
+            stamp = f"airline_lookup_at:{o}-{d}"
+            last = settings.load(conn).get(stamp)
+            refresh = timedelta(minutes=cfg.collector.airline_refresh_minutes)
+            started = datetime.fromisoformat(now())
+            due = not last or started - datetime.fromisoformat(last) >= refresh - DUE_SLACK
             quotes = attribute_airlines(
                 quotes,
                 repo.latest_oneway_detail(conn, o, d),
                 airline_need_range(route, today, reverse),
                 candidates,
-                cfg.collector.airline_lookups,
+                cfg.collector.airline_lookups if due else 0,
                 lookup,
             )
+            if due and not failed:
+                settings.save(conn, stamp, started.isoformat())
         return repo.save_oneway(conn, run_id, quotes, now())
 
     for route in cfg.routes:
@@ -203,6 +217,7 @@ def collect(
         )
         if rt:
             n += repo.save_roundtrip(conn, run_id, [q for q in rt if q.depart_date >= today], now())
+            calibration.record(conn, run_id, o, d)
         result.per_route[route.key] = n
         result.n_quotes += n
 
@@ -221,6 +236,19 @@ def collect(
     return result
 
 
+def prune_old_runs(
+    conn: sqlite3.Connection, retention_days: int, now: datetime | None = None
+) -> int:
+    """删掉 retention_days 天以前的抓取（连同报价）。出行前关注价格通常就一段时间，不用一直攒着。"""
+    if retention_days <= 0:
+        return 0
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
+    removed = repo.prune_runs(conn, cutoff.replace(microsecond=0).isoformat())
+    if removed:
+        log.info("已清理 %d 次 %d 天以前的抓取", removed, retention_days)
+    return removed
+
+
 def collect_and_alert(
     conn: sqlite3.Connection,
     cfg: AppConfig,
@@ -229,7 +257,8 @@ def collect_and_alert(
     if_due: bool = False,
     alerts: bool = True,
 ) -> CollectResult:
-    """抓取一次并评估提醒。网页“立即抓取”、桌面端定时器共用。"""
+    """抓取一次并评估提醒，然后清理过期数据。网页“立即抓取”、桌面端定时器、命令行共用。"""
+    cfg = settings.effective_config(conn, cfg)  # 界面里改过的抓取间隔等
     if source_factory is None:
         from farerecord.sources.ctrip_calendar import CtripCalendarSource
 
@@ -246,4 +275,5 @@ def collect_and_alert(
 
     if alerts:
         run_after_collect(conn, cfg, result)
+    prune_old_runs(conn, cfg.collector.retention_days)
     return result

@@ -39,7 +39,7 @@ def cfg(tmp_path=None, **alerts):
             }
         ],
         "alerts": {"new_low": False, "drop_percent": 0, "fail_streak": 0, **alerts},
-        "collector": {"request_interval_seconds": 0},
+        "collector": {"request_interval_seconds": 0, "retention_days": 0},
     }
     if tmp_path:
         data["database"] = str(tmp_path / "t.db")

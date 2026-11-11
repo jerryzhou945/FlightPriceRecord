@@ -19,7 +19,11 @@ def setup(tmp_path):
     cfg = parse_config(
         {
             "database": str(tmp_path / "t.db"),
-            "collector": {"request_interval_seconds": 0},
+            "collector": {
+                "request_interval_seconds": 0,
+                "interval_minutes": 60,
+                "retention_days": 0,
+            },
             "routes": [
                 {
                     "name": "芝加哥 ⇄ 上海",
@@ -171,6 +175,8 @@ def test_airlines_in_calendar_flex_and_history(setup) -> None:
     assert cal.json()["days"][0]["airline"] == {
         "code": "CX",
         "name": "国泰航空",
+        "short": "国泰",
+        "color": "#0f6f6a",
         "exact": True,
         "price": None,
     }
@@ -186,4 +192,4 @@ def test_airlines_in_calendar_flex_and_history(setup) -> None:
     )
     body = h.json()
     assert body["out_airline"]["code"] == "CX" and body["ret_airline"]["code"] == "KE"
-    assert body["legs"] == {"out": 3800, "ret": 3700}
+    assert body["legs"] == {"out": 3800, "ret": 3700, "sum": 7500}
