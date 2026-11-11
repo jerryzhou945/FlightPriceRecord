@@ -95,3 +95,23 @@ def test_failed_when_nothing_saved_and_other_routes_continue(conn) -> None:
     res2, _ = run(conn, src2, cfg((("CHI", "SHA"), ("CHI", "BJS"))))
     assert res2.status == "partial"
     assert res2.per_route["CHI-BJS"] == 7
+
+
+def test_is_due_respects_interval(conn) -> None:
+    from datetime import UTC, datetime
+
+    from farerecord.collector import is_due, next_due_at
+
+    assert is_due(conn, 60) and next_due_at(conn, 60) is None  # 从没抓过
+    repo.start_run(conn, "fake", "2026-11-10T10:00:00+00:00")
+    at = lambda h, m: datetime(2026, 11, 10, h, m, tzinfo=UTC)  # noqa: E731
+    assert next_due_at(conn, 60) == at(11, 0)
+    assert not is_due(conn, 60, at(10, 30))
+    assert is_due(conn, 60, at(10, 56))  # 5 分钟以内的提前量算到点
+    assert is_due(conn, 60, at(12, 0))
+
+
+def test_interval_has_a_floor() -> None:
+    c = parse_config({"routes": [], "collector": {"interval_minutes": 5}})
+    assert c.collector.interval_minutes == 30
+    assert parse_config({"routes": []}).collector.interval_minutes == 60

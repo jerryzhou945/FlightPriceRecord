@@ -131,6 +131,8 @@ def test_status_and_collect(setup) -> None:
     client, _ = setup
     s = client.get("/api/status").json()
     assert s["n_runs"] == 2 and s["fail_streak"] == 0 and s["last_ok_at"]
+    assert s["interval_minutes"] == 60 and s["next_due_at"] == "2026-11-10T01:00:00+00:00"
+    assert s["collecting"] is False
     r = client.post("/api/collect").json()
     assert r["status"] == "ok" and r["n_quotes"] > 0
     assert client.get("/api/status").json()["n_runs"] == 3

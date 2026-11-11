@@ -28,7 +28,7 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    from farerecord.collector import collect
+    from farerecord.collector import collect, is_due
     from farerecord.sources.ctrip_calendar import CtripCalendarSource
 
     cfg = load_config(args.config)
@@ -36,6 +36,10 @@ def cmd_collect(args: argparse.Namespace) -> int:
         print("config 里没有配置航线（routes）。")
         return 2
     conn = db.connect(cfg.database)
+    if args.if_due and not is_due(conn, cfg.collector.interval_minutes):
+        print(f"距离上次抓取不到 {cfg.collector.interval_minutes} 分钟，跳过。")
+        conn.close()
+        return 0
     source = CtripCalendarSource(timeout=cfg.collector.timeout_seconds)
     try:
         res = collect(conn, cfg, source)
@@ -161,11 +165,8 @@ def cmd_notify_test(args: argparse.Namespace) -> int:
 
 
 def _run_alerts(conn, cfg, res) -> None:
-    """抓取后评估提醒规则（M5 实现）。"""
-    try:
-        from farerecord.alerts import run_after_collect
-    except ImportError:
-        return
+    from farerecord.alerts import run_after_collect
+
     run_after_collect(conn, cfg, res)
 
 
@@ -180,6 +181,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("collect", help="抓取一次所有关注航线")
     s.add_argument("--no-alerts", action="store_true", help="只抓取，不发提醒")
+    s.add_argument(
+        "--if-due",
+        action="store_true",
+        help="距离上次抓取不到一个间隔（collector.interval_minutes）就跳过，定时任务用",
+    )
     s.set_defaults(func=cmd_collect)
 
     s = sub.add_parser("flex", help="弹性行程：找窗口内最便宜的去回组合")

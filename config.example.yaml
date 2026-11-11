@@ -29,5 +29,6 @@ alerts:
 
 # 抓取
 collector:
-  request_interval_seconds: 3
+  interval_minutes: 60        # 定时抓取间隔（分钟），最短 30
+  request_interval_seconds: 3 # 每个请求之间的间隔（秒），不要低于 2
   timeout_seconds: 25

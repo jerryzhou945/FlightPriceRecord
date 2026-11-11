@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+MIN_INTERVAL_MINUTES = 30  # 定时抓取的最短间隔，避免对携程造成压力
 
 
 @dataclass
@@ -48,6 +49,7 @@ class AlertConfig:
 class CollectorConfig:
     request_interval_seconds: float = 3.0
     timeout_seconds: float = 25.0
+    interval_minutes: int = 60  # 定时抓取间隔；不低于 MIN_INTERVAL_MINUTES
 
 
 @dataclass
@@ -132,6 +134,7 @@ def parse_config(data: dict[str, Any], root: Path = ROOT) -> AppConfig:
         collector=CollectorConfig(
             request_interval_seconds=float(c.get("request_interval_seconds", 3)),
             timeout_seconds=float(c.get("timeout_seconds", 25)),
+            interval_minutes=max(MIN_INTERVAL_MINUTES, int(c.get("interval_minutes", 60) or 60)),
         ),
     )
 

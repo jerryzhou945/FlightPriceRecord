@@ -46,6 +46,12 @@ def recent_runs(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, Any
     return [dict(r) for r in rows]
 
 
+def last_run_started_at(conn: sqlite3.Connection) -> str | None:
+    """最近一次抓取（不论成败）的开始时间。"""
+    row = conn.execute("SELECT started_at FROM fetch_run ORDER BY id DESC LIMIT 1").fetchone()
+    return row[0] if row else None
+
+
 def fail_streak(conn: sqlite3.Connection) -> int:
     """从最近一次往前数，连续失败（failed）的抓取次数。"""
     n = 0

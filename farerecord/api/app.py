@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Callable, Iterator
 from datetime import date
 from pathlib import Path
@@ -17,6 +18,7 @@ from farerecord import repository as repo
 from farerecord.analysis.flex import FlexQuery, search, suggestions
 from farerecord.analysis.history import combo_history, flex_low_history
 from farerecord.analysis.stats import PriceStats, compute
+from farerecord.collector import collect_and_alert, next_due_at
 from farerecord.config import ROOT, AppConfig, load_config
 from farerecord.models import Trip
 from farerecord.sources.base import PriceSource
@@ -105,6 +107,7 @@ def create_app(
     cfg = cfg or load_config()
     app = FastAPI(title="航价记", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.cfg = cfg
+    app.state.collect_lock = threading.Lock()  # 手动抓取和定时抓取共用，避免同时请求携程
 
     def norm(origin: str, dest: str) -> tuple[str, str]:
         o, d = origin.upper(), dest.upper()
@@ -259,7 +262,12 @@ def create_app(
         runs = repo.recent_runs(conn, 10)
         last_ok = next((r for r in runs if r["status"] in ("ok", "partial")), None)
         total = conn.execute("SELECT COUNT(*) FROM oneway_quote").fetchone()[0]
+        interval = cfg.collector.interval_minutes
+        due = next_due_at(conn, interval)
         return {
+            "interval_minutes": interval,
+            "next_due_at": due.isoformat() if due else None,
+            "collecting": app.state.collect_lock.locked(),
             "runs": runs,
             "fail_streak": repo.fail_streak(conn),
             "last_ok_at": last_ok["finished_at"] if last_ok else None,
@@ -335,26 +343,13 @@ def create_app(
 
     @app.post("/api/collect")
     def collect_now(conn: Conn) -> dict[str, Any]:
-        from farerecord.collector import collect
-
-        if source_factory is None:
-            from farerecord.sources.ctrip_calendar import CtripCalendarSource
-
-            src: PriceSource = CtripCalendarSource(timeout=cfg.collector.timeout_seconds)
-        else:
-            src = source_factory(cfg)
+        lock: threading.Lock = app.state.collect_lock
+        if not lock.acquire(blocking=False):
+            raise HTTPException(409, "正在抓取中，请稍等")
         try:
-            res = collect(conn, cfg, src)
+            res = collect_and_alert(conn, cfg, source_factory)
         finally:
-            close = getattr(src, "close", None)
-            if close:
-                close()
-        try:
-            from farerecord.alerts import run_after_collect
-        except ImportError:
-            pass
-        else:
-            run_after_collect(conn, cfg, res)
+            lock.release()
         return {
             "run_id": res.run_id,
             "status": res.status,

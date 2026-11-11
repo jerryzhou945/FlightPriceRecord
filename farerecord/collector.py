@@ -7,7 +7,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TypeVar
 
 from farerecord import repository as repo
@@ -30,6 +30,23 @@ class CollectResult:
 
 def today_cst() -> date:
     return datetime.now(CST).date()
+
+
+DUE_SLACK = timedelta(minutes=5)  # 定时器有抖动，提前这么久也算到点
+
+
+def next_due_at(conn: sqlite3.Connection, interval_minutes: int) -> datetime | None:
+    """下一次定时抓取的时间（UTC）；从没抓过返回 None，表示现在就该抓。"""
+    last = repo.last_run_started_at(conn)
+    if not last:
+        return None
+    return datetime.fromisoformat(last) + timedelta(minutes=interval_minutes)
+
+
+def is_due(conn: sqlite3.Connection, interval_minutes: int, now: datetime | None = None) -> bool:
+    """距离上一次抓取是否已经过了一个间隔。任务计划和桌面端都用它，避免重复抓取。"""
+    due = next_due_at(conn, interval_minutes)
+    return due is None or (now or datetime.now(UTC)) >= due - DUE_SLACK
 
 
 def collect(
@@ -100,4 +117,28 @@ def collect(
         "\n".join(result.errors) or None,
         now(),
     )
+    return result
+
+
+def collect_and_alert(
+    conn: sqlite3.Connection,
+    cfg: AppConfig,
+    source_factory: Callable[[AppConfig], PriceSource] | None = None,
+) -> CollectResult:
+    """抓取一次并评估提醒。网页“立即抓取”、桌面端定时器共用。"""
+    if source_factory is None:
+        from farerecord.sources.ctrip_calendar import CtripCalendarSource
+
+        source: PriceSource = CtripCalendarSource(timeout=cfg.collector.timeout_seconds)
+    else:
+        source = source_factory(cfg)
+    try:
+        result = collect(conn, cfg, source)
+    finally:
+        close = getattr(source, "close", None)
+        if close:
+            close()
+    from farerecord.alerts import run_after_collect
+
+    run_after_collect(conn, cfg, result)
     return result
