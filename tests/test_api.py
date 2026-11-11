@@ -83,6 +83,8 @@ def test_flex(setup) -> None:
     assert [h["price"] for h in body["low_history"]] == [8000, 7571]
     assert body["low_stats"]["is_new_low"] is True
     assert body["suggestions"]
+    assert body["leg_lows"]["out"] == {"date": "2026-12-30", "price": 3846}
+    assert body["leg_lows"]["ret"] == {"date": "2027-01-29", "price": 3725}
     bad = client.get("/api/flex", params={**params, "start": "2027-01-01"})
     assert bad.status_code == 400
 
