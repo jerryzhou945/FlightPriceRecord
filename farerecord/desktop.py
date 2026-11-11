@@ -17,11 +17,13 @@ import threading
 import time
 from pathlib import Path
 
-from farerecord.config import AppConfig, load_config
+from farerecord.config import ROOT, AppConfig, load_config
 
 log = logging.getLogger(__name__)
 
 TITLE = "航价记"
+APP_ID = "FareRecord.Desktop"
+ICON = ROOT / "web" / "icon.ico"  # scripts/make_icon.py 生成
 WINDOW_BG = "#0a0c1b"  # 和 web/styles.css 的 --bg 一致，加载时不闪白
 CAPTION_COLOR = 0x00220F0D  # 标题栏颜色 #0d0f22，Windows 的 COLORREF 是 0x00BBGGRR
 
@@ -68,8 +70,33 @@ def start_server(cfg: AppConfig, port: int, timeout: float = 15.0):
     return server, scheduler
 
 
-def style_title_bar(window) -> None:
-    """把 Windows 标题栏改成和界面一致的深色（Windows 11；旧系统上静默跳过）。"""
+def set_app_identity() -> None:
+    """让任务栏把它当成独立的应用（用窗口自己的图标），而不是归到 Python 名下。"""
+    if sys.platform == "win32":
+        with contextlib.suppress(Exception):
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+
+
+def set_window_icon(hwnd: int) -> None:
+    """标题栏和任务栏用航价记的图标（否则是 python.exe 的）。"""
+    user32 = ctypes.windll.user32
+    user32.LoadImageW.restype = ctypes.c_void_p
+    user32.SendMessageW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    # (WM_SETICON 的大小图标, 对应的系统图标尺寸)：小图标 SM_CXSMICON=49，大图标 SM_CXICON=11
+    for which, metric in ((0, 49), (1, 11)):
+        size = user32.GetSystemMetrics(metric)
+        handle = user32.LoadImageW(None, str(ICON), 1, size, size, 0x10)  # IMAGE_ICON, 从文件加载
+        if handle:
+            user32.SendMessageW(hwnd, 0x80, which, handle)  # WM_SETICON
+
+
+def style_window(window) -> None:
+    """标题栏改成和界面一致的深色并换上图标（Windows 11；旧系统上静默跳过）。"""
     if sys.platform != "win32":
         return
     with contextlib.suppress(Exception):
@@ -80,11 +107,14 @@ def style_title_bar(window) -> None:
             dwm.DwmSetWindowAttribute(
                 ctypes.c_void_p(hwnd), attribute, ctypes.byref(v), ctypes.sizeof(v)
             )
+        if ICON.is_file():
+            set_window_icon(hwnd)
 
 
 def run(cfg: AppConfig | None = None) -> int:
     cfg = cfg or load_config()
     webview = import_webview()
+    set_app_identity()
     port = free_port()
     server, scheduler = start_server(cfg, port)
     storage = Path(cfg.database).parent / "webview"  # 记住主题等界面偏好
@@ -98,7 +128,7 @@ def run(cfg: AppConfig | None = None) -> int:
             background_color=WINDOW_BG,
             text_select=True,
         )
-        window.events.shown += lambda: style_title_bar(window)
+        window.events.shown += lambda: style_window(window)
         webview.start(private_mode=False, storage_path=str(storage))
     finally:
         scheduler.stop()

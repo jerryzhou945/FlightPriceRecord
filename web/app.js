@@ -314,7 +314,8 @@ function renderHero() {
   }
   if (s && s.n > 1) {
     $("kPct").textContent = s.is_new_low ? "历史新低"
-      : s.high > s.low && s.current >= s.high ? "近期最高点"
+      : s.high === s.low ? "近期价格持平"
+      : s.current >= s.high ? "近期最高点"
       : `比 ${s.cheaper_than_pct}% 的时间便宜`;
     $("kPctMark").style.left = (s.high === s.low ? 50 : ((s.current - s.low) / (s.high - s.low)) * 100) + "%";
     $("kMin").textContent = yuan(s.low);
