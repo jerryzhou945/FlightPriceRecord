@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from typing import Any
 
-from farerecord.models import OnewayQuote, RoundtripQuote
+from farerecord.models import OnewayQuote, PriceWatch, RoundtripQuote
 
 
 def utcnow_iso() -> str:
@@ -258,3 +258,74 @@ def manual_quotes(
         (origin, dest, depart.isoformat(), ret.isoformat()),
     )
     return [dict(r) for r in rows]
+
+
+# ---------- price watches ----------
+
+
+def _watch(row: sqlite3.Row) -> PriceWatch:
+    return PriceWatch(
+        id=row["id"],
+        origin=row["origin"],
+        dest=row["dest"],
+        depart_date=date.fromisoformat(row["depart_date"]),
+        return_date=date.fromisoformat(row["return_date"]),
+        target_price=row["target_price"],
+        enabled=bool(row["enabled"]),
+    )
+
+
+def add_watch(
+    conn: sqlite3.Connection,
+    origin: str,
+    dest: str,
+    depart: date,
+    ret: date,
+    target_price: float,
+    created_at: str | None = None,
+) -> int:
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO price_watch (origin, dest, depart_date, return_date, target_price, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                origin,
+                dest,
+                depart.isoformat(),
+                ret.isoformat(),
+                target_price,
+                created_at or utcnow_iso(),
+            ),
+        )
+    return int(cur.lastrowid)
+
+
+def list_watches(conn: sqlite3.Connection, enabled_only: bool = False) -> list[PriceWatch]:
+    sql = "SELECT * FROM price_watch"
+    if enabled_only:
+        sql += " WHERE enabled = 1"
+    return [_watch(r) for r in conn.execute(sql + " ORDER BY depart_date, return_date, id")]
+
+
+def update_watch(
+    conn: sqlite3.Connection,
+    watch_id: int,
+    *,
+    target_price: float | None = None,
+    enabled: bool | None = None,
+) -> bool:
+    """返回这条提醒是否存在。"""
+    with conn:
+        if target_price is not None:
+            conn.execute(
+                "UPDATE price_watch SET target_price=? WHERE id=?", (target_price, watch_id)
+            )
+        if enabled is not None:
+            conn.execute("UPDATE price_watch SET enabled=? WHERE id=?", (int(enabled), watch_id))
+    return conn.execute("SELECT 1 FROM price_watch WHERE id=?", (watch_id,)).fetchone() is not None
+
+
+def delete_watch(conn: sqlite3.Connection, watch_id: int) -> bool:
+    with conn:
+        cur = conn.execute("DELETE FROM price_watch WHERE id=?", (watch_id,))
+    return cur.rowcount > 0

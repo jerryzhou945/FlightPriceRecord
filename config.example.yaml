@@ -18,11 +18,12 @@ routes:
     # 低于这个往返估价就提醒（人民币）；留空则不启用
     target_price: 7000
 
-# 提醒规则
+# 提醒规则（这里是默认值；在界面“提醒”页里改的开关和目标价会覆盖这里）
 alerts:
-  channel: wxpusher          # wxpusher | pushplus | console
-  new_low: true              # 弹性窗口内最低价创历史新低
+  desktop: true              # Windows 桌面通知（右下角弹窗，点击打开携程）
+  channel: console           # 微信推送：wxpusher | pushplus | console（不推微信）
   # channel 选 wxpusher / pushplus 时，在 .env 填写对应密钥；先用 farerecord notify-test 测试
+  new_low: true              # 弹性窗口内最低价创历史新低
   drop_percent: 5            # 24 小时跌幅超过 5% 提醒；0 关闭
   fail_streak: 2             # 连续失败 N 次提醒；0 关闭
   quiet_hours: "23:00-08:00" # 本机时间免打扰；留空关闭

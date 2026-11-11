@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -63,6 +63,22 @@ _MIGRATIONS: dict[int, str] = {
     """,
     2: """
     ALTER TABLE oneway_quote ADD COLUMN airline TEXT;   -- 出最低价的航司二字码，可为空
+    """,
+    3: """
+    CREATE TABLE price_watch (                 -- 界面里给某个去回组合设的到价提醒
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        origin       TEXT NOT NULL,
+        dest         TEXT NOT NULL,
+        depart_date  TEXT NOT NULL,
+        return_date  TEXT NOT NULL,
+        target_price REAL NOT NULL,
+        enabled      INTEGER NOT NULL DEFAULT 1,
+        created_at   TEXT NOT NULL
+    );
+    CREATE TABLE setting (                     -- 界面里改的设置，覆盖 config.yaml
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL                    -- JSON
+    );
     """,
 }
 

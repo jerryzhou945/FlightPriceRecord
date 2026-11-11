@@ -50,3 +50,16 @@ class Trip:
     def best_price(self) -> float:
         """估价和真实往返价里更低的那个。"""
         return min(self.price, self.rt_price) if self.rt_price else self.price
+
+
+@dataclass(frozen=True, slots=True)
+class PriceWatch:
+    """到价提醒：某个去回组合的往返估价不高于 target_price 时通知。"""
+
+    id: int
+    origin: str
+    dest: str
+    depart_date: date
+    return_date: date
+    target_price: float
+    enabled: bool = True

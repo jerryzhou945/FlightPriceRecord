@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from datetime import date
@@ -13,15 +14,19 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from farerecord import db
+from farerecord import db, settings
 from farerecord import repository as repo
 from farerecord.airlines import airline_json
+from farerecord.alerts import recent_log, send_test
+from farerecord.alerts.notifiers import build_notifier, make_notifier
+from farerecord.alerts.rules import watch_trip
 from farerecord.analysis.flex import FlexQuery, search, suggestions
 from farerecord.analysis.history import flex_low_history
 from farerecord.analysis.stats import PriceStats, compute
 from farerecord.collector import collect_and_alert, next_due_at
-from farerecord.config import ROOT, AppConfig, load_config
-from farerecord.models import Trip
+from farerecord.config import ROOT, AppConfig, load_config, parse_quiet_hours
+from farerecord.models import PriceWatch, Trip
+from farerecord.settings import effective_config
 from farerecord.sources.base import PriceSource
 
 WEB_DIR = ROOT / "web"
@@ -106,6 +111,31 @@ class ManualQuoteIn(BaseModel):
     note: str | None = Field(default=None, max_length=200)
 
 
+class WatchIn(BaseModel):
+    origin: str = Field(min_length=3, max_length=3)
+    dest: str = Field(min_length=3, max_length=3)
+    depart: date
+    ret: date
+    target_price: float = Field(gt=0, lt=1_000_000)
+
+
+class WatchPatch(BaseModel):
+    target_price: float | None = Field(default=None, gt=0, lt=1_000_000)
+    enabled: bool | None = None
+
+
+class AlertSettingsIn(BaseModel):
+    desktop: bool | None = None
+    new_low: bool | None = None
+    drop_percent: float | None = Field(default=None, ge=0, le=90)
+    fail_streak: int | None = Field(default=None, ge=0, le=50)
+    quiet_hours: str | None = Field(default=None, max_length=11)
+    # 目标价跟着航线走；传 null 表示取消目标价
+    target_price: float | None = Field(default=None, gt=0, lt=1_000_000)
+    origin: str | None = None
+    dest: str | None = None
+
+
 def create_app(
     cfg: AppConfig | None = None,
     source_factory: Callable[[AppConfig], PriceSource] | None = None,
@@ -123,7 +153,8 @@ def create_app(
         return o, d
 
     @app.get("/api/routes")
-    def routes() -> list[dict[str, Any]]:
+    def routes(conn: Conn) -> list[dict[str, Any]]:
+        current = effective_config(conn, cfg)
         return [
             {
                 "key": r.key,
@@ -139,7 +170,7 @@ def create_app(
                     "ideal_days": r.flex.ideal_days,
                 },
             }
-            for r in cfg.routes
+            for r in current.routes
         ]
 
     @app.get("/api/calendar")
@@ -307,16 +338,38 @@ def create_app(
             "n_runs": conn.execute("SELECT COUNT(*) FROM fetch_run").fetchone()[0],
         }
 
+    def watch_json(conn: sqlite3.Connection, w: PriceWatch) -> dict[str, Any]:
+        trip = watch_trip(conn, w)
+        price = trip.best_price if trip else None
+        return {
+            "id": w.id,
+            "origin": w.origin,
+            "dest": w.dest,
+            "depart": w.depart_date.isoformat(),
+            "return": w.return_date.isoformat(),
+            "days": (w.return_date - w.depart_date).days,
+            "target_price": w.target_price,
+            "enabled": w.enabled,
+            "current": price,
+            "hit": price is not None and price <= w.target_price,
+            "out_airline": airline_json(
+                repo.latest_airlines(conn, w.origin, w.dest).get(w.depart_date)
+            ),
+            "ret_airline": airline_json(
+                repo.latest_airlines(conn, w.dest, w.origin).get(w.return_date)
+            ),
+            "ctrip_url": ctrip_url(w.origin, w.dest, w.depart_date, w.return_date),
+        }
+
     @app.get("/api/alerts")
     def alerts(conn: Conn, origin: str | None = None, dest: str | None = None) -> dict[str, Any]:
-        from farerecord.alerts import recent_log
-        from farerecord.alerts.notifiers import make_notifier
-
-        n = make_notifier(cfg.alerts.channel)
-        route = cfg.route(origin, dest) if origin and dest else None
-        route = route or (cfg.routes[0] if cfg.routes else None)
-        a = cfg.alerts
-        qh = f"{a.quiet_hours[0]:%H:%M}–{a.quiet_hours[1]:%H:%M}" if a.quiet_hours else None
+        current = effective_config(conn, cfg)
+        a = current.alerts
+        wechat = make_notifier(a.channel)
+        has_wechat = wechat.name in ("wxpusher", "pushplus")
+        route = current.route(origin, dest) if origin and dest else None
+        route = route or (current.routes[0] if current.routes else None)
+        qh = f"{a.quiet_hours[0]:%H:%M}-{a.quiet_hours[1]:%H:%M}" if a.quiet_hours else ""
         target = route.target_price if route else None
         rules = [
             {
@@ -351,12 +404,76 @@ def create_app(
             },
         ]
         return {
-            "channel": n.name,
-            "channel_label": n.label,
-            "configured": n.name != "console" and n.configured,
+            "channel": wechat.name if has_wechat else "console",
+            "channel_label": build_notifier(a).label,
+            "configured": has_wechat and wechat.configured,
+            "desktop_supported": sys.platform == "win32",
+            "settings": {
+                "desktop": a.desktop,
+                "new_low": a.new_low,
+                "drop_percent": a.drop_percent,
+                "fail_streak": a.fail_streak,
+                "quiet_hours": qh,
+                "target_price": target,
+            },
             "rules": rules,
+            "watches": [watch_json(conn, w) for w in repo.list_watches(conn)],
             "log": recent_log(conn, 20),
         }
+
+    @app.put("/api/alerts/settings")
+    def save_alert_settings(conn: Conn, body: AlertSettingsIn) -> dict[str, Any]:
+        """界面里改提醒开关和目标价；只保存请求里出现的字段。"""
+        sent = body.model_dump(exclude_unset=True)
+        if "quiet_hours" in sent:
+            try:
+                parse_quiet_hours(sent["quiet_hours"])
+            except ValueError as exc:
+                raise HTTPException(400, "免打扰时段格式应为 23:00-08:00") from exc
+        if "target_price" in sent:
+            o, d = norm(body.origin or "", body.dest or "")
+            route = cfg.route(o, d)
+            if route is None:
+                raise HTTPException(404, f"没有配置航线 {o}-{d}")
+            settings.save(conn, settings.TARGET_PREFIX + route.key, sent["target_price"])
+        for key in settings.ALERT_KEYS:
+            if key in sent and sent[key] is not None:
+                settings.save(conn, f"alerts.{key}", sent[key])
+        return alerts(conn, body.origin, body.dest)["settings"]
+
+    @app.post("/api/alerts/test")
+    def test_alert(conn: Conn) -> dict[str, Any]:
+        ok, notifier = send_test(conn, cfg)
+        if notifier.name == "console":
+            raise HTTPException(400, "桌面通知已关闭，微信推送也没有配置，没有可以发送的通道")
+        if not ok:
+            raise HTTPException(502, f"{notifier.label} 发送失败")
+        return {"sent": True, "channel_label": notifier.label}
+
+    @app.post("/api/watches", status_code=201)
+    def add_watch(conn: Conn, body: WatchIn) -> dict[str, Any]:
+        o, d = norm(body.origin, body.dest)
+        if body.ret <= body.depart:
+            raise HTTPException(400, "返回日期必须晚于出发日期")
+        for w in repo.list_watches(conn):
+            if (w.origin, w.dest, w.depart_date, w.return_date) == (o, d, body.depart, body.ret):
+                repo.update_watch(conn, w.id, target_price=body.target_price, enabled=True)
+                return {"id": w.id}
+        return {"id": repo.add_watch(conn, o, d, body.depart, body.ret, body.target_price)}
+
+    @app.patch("/api/watches/{watch_id}")
+    def update_watch(conn: Conn, watch_id: int, body: WatchPatch) -> dict[str, Any]:
+        found = repo.update_watch(
+            conn, watch_id, target_price=body.target_price, enabled=body.enabled
+        )
+        if not found:
+            raise HTTPException(404, "这条提醒不存在")
+        return {"id": watch_id}
+
+    @app.delete("/api/watches/{watch_id}", status_code=204)
+    def delete_watch(conn: Conn, watch_id: int) -> None:
+        if not repo.delete_watch(conn, watch_id):
+            raise HTTPException(404, "这条提醒不存在")
 
     @app.post("/api/manual-quote", status_code=201)
     def manual_quote(conn: Conn, body: ManualQuoteIn) -> dict[str, Any]:

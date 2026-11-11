@@ -139,27 +139,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_notify_test(args: argparse.Namespace) -> int:
-    from datetime import datetime
-
-    from farerecord.alerts import send_message
-    from farerecord.alerts.notifiers import make_notifier
-    from farerecord.alerts.rules import Alert, Message
+    from farerecord.alerts import send_test
 
     cfg = load_config(args.config)
-    n = make_notifier(cfg.alerts.channel)
-    if n.name != "console" and not n.configured:
-        print(f"{n.label} 还没有配置，请在 .env 里填写密钥（见 .env.example）。")
-        return 2
-    now = datetime.now().astimezone()
-    msg = Message(
-        "航价记测试消息",
-        f"### ✅ 航价记推送测试\n\n收到这条消息说明微信提醒已经配置好了。\n\n{now:%Y-%m-%d %H:%M}",
-        None,
-        [Alert("test", f"test:{now.isoformat()}")],
-    )
     conn = db.connect(cfg.database)
-    ok = send_message(conn, msg, n, now)
+    ok, n = send_test(conn, cfg)
     conn.close()
+    if n.name == "console":
+        print("没有可用的推送通道：桌面通知已关闭，微信密钥也没有配置（见 .env.example）。")
+        return 2
     print(f"已发送到 {n.label}" if ok else "发送失败，查看上面的错误信息。")
     return 0 if ok else 1
 

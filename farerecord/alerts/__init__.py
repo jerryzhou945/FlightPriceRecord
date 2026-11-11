@@ -7,22 +7,25 @@ import sqlite3
 from datetime import datetime
 
 from farerecord import repository as repo
-from farerecord.alerts.notifiers import Notifier, NotifyError, make_notifier
+from farerecord.alerts.notifiers import Notifier, NotifyError, build_notifier
 from farerecord.alerts.rules import (
     RULE_LABELS,
+    Alert,
     Message,
     already_sent,
     build_price_message,
     evaluate_route,
+    evaluate_watch,
     fail_message,
     in_quiet_hours,
 )
 from farerecord.config import AppConfig, RouteConfig
 from farerecord.models import Trip
+from farerecord.settings import effective_config
 
 log = logging.getLogger(__name__)
 
-__all__ = ["RULE_LABELS", "pending_messages", "run_after_collect", "send_message"]
+__all__ = ["RULE_LABELS", "pending_messages", "run_after_collect", "send_message", "send_test"]
 
 
 def trip_airlines(
@@ -44,6 +47,19 @@ def pending_messages(conn: sqlite3.Connection, cfg: AppConfig, now: datetime) ->
         if fresh and trip:
             msgs.append(
                 build_price_message(route, trip, fresh, info, trip_airlines(conn, route, trip))
+            )
+    for watch in repo.list_watches(conn, enabled_only=True):
+        alert, trip = evaluate_watch(conn, watch, now.date())
+        if alert and trip and not already_sent(conn, alert):
+            known = cfg.route(watch.origin, watch.dest)
+            route = RouteConfig(
+                name=known.name if known else f"{watch.origin} ⇄ {watch.dest}",
+                origin=watch.origin,
+                dest=watch.dest,
+                target_price=watch.target_price,
+            )
+            msgs.append(
+                build_price_message(route, trip, [alert], {}, trip_airlines(conn, route, trip))
             )
     fm = fail_message(conn, cfg)
     if fm and not already_sent(conn, fm.alerts[0]):
@@ -83,7 +99,8 @@ def run_after_collect(
 ) -> list[Message]:
     """在每次抓取后调用。返回成功发送的消息。"""
     now = now or datetime.now().astimezone()
-    notifier = notifier or make_notifier(cfg.alerts.channel)
+    cfg = effective_config(conn, cfg)
+    notifier = notifier or build_notifier(cfg.alerts)
     msgs = pending_messages(conn, cfg, now)
     if not msgs:
         return []
@@ -95,6 +112,24 @@ def run_after_collect(
     if sent:
         print(f"已推送 {len(sent)} 条提醒（{notifier.label}）")
     return sent
+
+
+def send_test(
+    conn: sqlite3.Connection,
+    cfg: AppConfig,
+    notifier: Notifier | None = None,
+    now: datetime | None = None,
+) -> tuple[bool, Notifier]:
+    """发一条测试提醒，返回 (是否成功, 用的通道)。"""
+    now = now or datetime.now().astimezone()
+    notifier = notifier or build_notifier(effective_config(conn, cfg).alerts)
+    msg = Message(
+        "航价记测试提醒",
+        f"### ✅ 航价记提醒测试\n\n看到这条消息说明提醒已经可以正常送达。\n\n{now:%Y-%m-%d %H:%M}",
+        None,
+        [Alert("test", f"test:{now.isoformat()}")],
+    )
+    return send_message(conn, msg, notifier, now), notifier
 
 
 def recent_log(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:

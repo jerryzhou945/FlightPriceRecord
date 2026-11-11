@@ -40,7 +40,8 @@ class RouteConfig:
 
 @dataclass
 class AlertConfig:
-    channel: str = "console"
+    channel: str = "console"  # 微信通道：wxpusher | pushplus | console（不推微信）
+    desktop: bool = True  # Windows 桌面通知
     new_low: bool = True
     drop_percent: float = 5.0
     fail_streak: int = 2
@@ -132,6 +133,7 @@ def parse_config(data: dict[str, Any], root: Path = ROOT) -> AppConfig:
         routes=routes,
         alerts=AlertConfig(
             channel=str(a.get("channel", "console")),
+            desktop=bool(a.get("desktop", True)),
             new_low=bool(a.get("new_low", True)),
             drop_percent=float(a.get("drop_percent", 5) or 0),
             fail_streak=int(a.get("fail_streak", 2) or 0),
