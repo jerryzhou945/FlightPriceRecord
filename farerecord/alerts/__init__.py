@@ -6,6 +6,7 @@ import logging
 import sqlite3
 from datetime import datetime
 
+from farerecord import repository as repo
 from farerecord.alerts.notifiers import Notifier, NotifyError, make_notifier
 from farerecord.alerts.rules import (
     RULE_LABELS,
@@ -16,11 +17,23 @@ from farerecord.alerts.rules import (
     fail_message,
     in_quiet_hours,
 )
-from farerecord.config import AppConfig
+from farerecord.config import AppConfig, RouteConfig
+from farerecord.models import Trip
 
 log = logging.getLogger(__name__)
 
 __all__ = ["RULE_LABELS", "pending_messages", "run_after_collect", "send_message"]
+
+
+def trip_airlines(
+    conn: sqlite3.Connection, route: RouteConfig, trip: Trip
+) -> tuple[str | None, str | None]:
+    """组合的 (去程航司, 回程航司)，取最近一次抓取识别的结果。"""
+    o, d = route.origin, route.dest
+    return (
+        repo.latest_airlines(conn, o, d).get(trip.depart_date),
+        repo.latest_airlines(conn, d, o).get(trip.return_date),
+    )
 
 
 def pending_messages(conn: sqlite3.Connection, cfg: AppConfig, now: datetime) -> list[Message]:
@@ -29,7 +42,9 @@ def pending_messages(conn: sqlite3.Connection, cfg: AppConfig, now: datetime) ->
         alerts, trip, info = evaluate_route(conn, cfg, route, now.date())
         fresh = [a for a in alerts if not already_sent(conn, a)]
         if fresh and trip:
-            msgs.append(build_price_message(route, trip, fresh, info))
+            msgs.append(
+                build_price_message(route, trip, fresh, info, trip_airlines(conn, route, trip))
+            )
     fm = fail_message(conn, cfg)
     if fm and not already_sent(conn, fm.alerts[0]):
         msgs.append(fm)

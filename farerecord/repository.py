@@ -71,10 +71,16 @@ def save_oneway(
     conn: sqlite3.Connection, run_id: int, quotes: Iterable[OnewayQuote], observed_at: str
 ) -> int:
     rows = [
-        (run_id, q.origin, q.dest, q.depart_date.isoformat(), q.price, observed_at) for q in quotes
+        (run_id, q.origin, q.dest, q.depart_date.isoformat(), q.price, observed_at, q.airline)
+        for q in quotes
     ]
     with conn:
-        conn.executemany("INSERT OR REPLACE INTO oneway_quote VALUES (?, ?, ?, ?, ?, ?)", rows)
+        conn.executemany(
+            "INSERT OR REPLACE INTO oneway_quote "
+            "(run_id, origin, dest, depart_date, price, observed_at, airline) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
     return len(rows)
 
 
@@ -115,6 +121,26 @@ def latest_oneway(conn: sqlite3.Connection, origin: str, dest: str) -> dict[date
         (run_id, origin, dest),
     )
     return {date.fromisoformat(r["depart_date"]): r["price"] for r in rows}
+
+
+def latest_oneway_detail(
+    conn: sqlite3.Connection, origin: str, dest: str
+) -> dict[date, tuple[float, str | None]]:
+    """最近一次抓取里每天的 (单程最低价, 航司二字码或 None)。"""
+    run_id = _latest_run_for(conn, "oneway_quote", origin, dest)
+    if run_id is None:
+        return {}
+    rows = conn.execute(
+        "SELECT depart_date, price, airline FROM oneway_quote "
+        "WHERE run_id=? AND origin=? AND dest=?",
+        (run_id, origin, dest),
+    )
+    return {date.fromisoformat(r["depart_date"]): (r["price"], r["airline"]) for r in rows}
+
+
+def latest_airlines(conn: sqlite3.Connection, origin: str, dest: str) -> dict[date, str]:
+    """最近一次抓取里，已识别出航司的日期 → 航司二字码。"""
+    return {d: a for d, (_, a) in latest_oneway_detail(conn, origin, dest).items() if a}
 
 
 def latest_observed_at(conn: sqlite3.Connection, origin: str, dest: str) -> str | None:

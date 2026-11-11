@@ -15,8 +15,9 @@ from pydantic import BaseModel, Field
 
 from farerecord import db
 from farerecord import repository as repo
+from farerecord.airlines import airline_json
 from farerecord.analysis.flex import FlexQuery, search, suggestions
-from farerecord.analysis.history import combo_history, flex_low_history
+from farerecord.analysis.history import flex_low_history
 from farerecord.analysis.stats import PriceStats, compute
 from farerecord.collector import collect_and_alert, next_due_at
 from farerecord.config import ROOT, AppConfig, load_config
@@ -39,8 +40,14 @@ def ctrip_url(origin: str, dest: str, depart: date, ret: date | None = None) -> 
     )
 
 
-def trip_json(t: Trip, origin: str, dest: str) -> dict[str, Any]:
+Airlines = tuple[dict[date, str], dict[date, str]]  # (去程, 回程) 日期 → 航司二字码
+
+
+def trip_json(t: Trip, origin: str, dest: str, airlines: Airlines | None = None) -> dict[str, Any]:
+    out_al, ret_al = airlines or ({}, {})
     return {
+        "out_airline": airline_json(out_al.get(t.depart_date)),
+        "ret_airline": airline_json(ret_al.get(t.return_date)),
         "depart": t.depart_date.isoformat(),
         "return": t.return_date.isoformat(),
         "days": t.days,
@@ -143,13 +150,21 @@ def create_app(
         month: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
     ) -> dict[str, Any]:
         o, d = norm(origin, dest)
-        prices = {
-            k: v for k, v in repo.latest_oneway(conn, o, d).items() if k.isoformat()[:7] == month
+        detail = {
+            k: v
+            for k, v in repo.latest_oneway_detail(conn, o, d).items()
+            if k.isoformat()[:7] == month
         }
-        tier = _tiers(list(prices.values()))
+        tier = _tiers([p for p, _ in detail.values()])
         days = [
-            {"date": k.isoformat(), "price": v, "tier": tier(v), "ctrip_url": ctrip_url(o, d, k)}
-            for k, v in sorted(prices.items())
+            {
+                "date": k.isoformat(),
+                "price": p,
+                "tier": tier(p),
+                "airline": airline_json(a),
+                "ctrip_url": ctrip_url(o, d, k),
+            }
+            for k, (p, a) in sorted(detail.items())
         ]
         low = min(days, key=lambda x: x["price"]) if days else None
         return {
@@ -182,6 +197,7 @@ def create_app(
         out = repo.latest_oneway(conn, o, d)
         back = repo.latest_oneway(conn, d, o)
         res = search(out, back, q, repo.latest_roundtrip(conn, o, d))
+        al: Airlines = (repo.latest_airlines(conn, o, d), repo.latest_airlines(conn, d, o))
         dates = q.depart_dates
         stays = q.stays
         di = {x: i for i, x in enumerate(dates)}
@@ -210,16 +226,26 @@ def create_app(
             "stays": stays,
             "cells": cells,
             "count": len(res.trips),
-            "best": trip_json(res.best, o, d) if res.best else None,
-            "best_ideal": trip_json(res.best_ideal, o, d) if res.best_ideal else None,
+            "best": trip_json(res.best, o, d, al) if res.best else None,
+            "best_ideal": trip_json(res.best_ideal, o, d, al) if res.best_ideal else None,
             "ideal_saving": res.ideal_saving,
-            "top": [trip_json(t, o, d) for t in res.top(top)],
-            "by_days": [{"days": s, **trip_json(t, o, d)} for s, t in sorted(res.by_days.items())],
+            "top": [trip_json(t, o, d, al) for t in res.top(top)],
+            "by_days": [
+                {"days": s, **trip_json(t, o, d, al)} for s, t in sorted(res.by_days.items())
+            ],
             "leg_lows": {
-                "out": {"date": lo_out.depart_date.isoformat(), "price": lo_out.out_price}
+                "out": {
+                    "date": lo_out.depart_date.isoformat(),
+                    "price": lo_out.out_price,
+                    "airline": airline_json(al[0].get(lo_out.depart_date)),
+                }
                 if lo_out
                 else None,
-                "ret": {"date": lo_ret.return_date.isoformat(), "price": lo_ret.ret_price}
+                "ret": {
+                    "date": lo_ret.return_date.isoformat(),
+                    "price": lo_ret.ret_price,
+                    "airline": airline_json(al[1].get(lo_ret.return_date)),
+                }
                 if lo_ret
                 else None,
             },
@@ -240,13 +266,19 @@ def create_app(
         o, d = norm(origin, dest)
         if ret is not None and ret <= depart:
             raise HTTPException(400, "返回日期必须晚于出发日期")
+        legs = None
         if ret:
-            series = combo_history(conn, o, d, depart, ret)
+            rows = repo.combo_series(conn, o, d, depart, ret)
+            series = [(t, a + b) for t, a, b in rows]
+            legs = {"out": rows[-1][1], "ret": rows[-1][2]} if rows else None
             manual = repo.manual_quotes(conn, o, d, depart, ret)
         else:
             series = repo.oneway_series(conn, o, d, depart)
             manual = []
         return {
+            "legs": legs,
+            "out_airline": airline_json(repo.latest_airlines(conn, o, d).get(depart)),
+            "ret_airline": airline_json(repo.latest_airlines(conn, d, o).get(ret)) if ret else None,
             "origin": o,
             "dest": d,
             "depart": depart.isoformat(),

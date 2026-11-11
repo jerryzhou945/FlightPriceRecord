@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TypeVar
 
 from farerecord import repository as repo
-from farerecord.config import AppConfig
+from farerecord.airlines import matching_dates
+from farerecord.config import AppConfig, RouteConfig
+from farerecord.models import OnewayQuote
 from farerecord.sources.base import PriceSource, RetryableSourceError, SourceError
 from farerecord.sources.ctrip_calendar import CST
 
@@ -30,6 +33,62 @@ class CollectResult:
 
 def today_cst() -> date:
     return datetime.now(CST).date()
+
+
+AIRLINE_HORIZON_DAYS = 60  # 没配弹性窗口时，只保证未来这么多天的航司识别
+
+
+def airline_need_range(route: RouteConfig, today: date, reverse: bool) -> tuple[date, date]:
+    """必须识别出航司的日期范围：去程是出发窗口，回程是对应的返回日期范围。"""
+    f = route.flex
+    if f.start and f.end and f.end >= today:
+        lo, hi = f.start, f.end
+        if reverse:
+            lo, hi = lo + timedelta(days=f.min_days), hi + timedelta(days=f.max_days)
+    else:
+        lo, hi = today, today + timedelta(days=AIRLINE_HORIZON_DAYS)
+    return max(lo, today), hi
+
+
+def attribute_airlines(
+    quotes: list[OnewayQuote],
+    previous: dict[date, tuple[float, str | None]],
+    need_range: tuple[date, date],
+    candidates: list[str],
+    max_lookups: int,
+    lookup: Callable[[str], dict[date, float] | None],
+) -> list[OnewayQuote]:
+    """给每天的最低价标上航司。
+
+    - 价格和上一次抓取一样的日期，沿用上次识别的航司，不发请求
+    - 其余在 need_range 内的日期，按"上次出最低价最多的航司优先"逐家查询
+      （lookup 返回该航司每天的最低价；失败返回 None 并停止），全部对上或查满
+      max_lookups 家就停
+    - 查完仍对不上的日期记为 ""（已查过、候选航司里没有），价格不变就不再重复查；
+      查询中途失败的日期保持 None，下次抓取再试
+    """
+    lowest = {q.depart_date: q.price for q in quotes}
+    found: dict[date, str] = {}
+    for d, p in lowest.items():
+        prev = previous.get(d)
+        if prev and prev[1] is not None and prev[0] == p:
+            found[d] = prev[1]
+    lo, hi = need_range
+    need = {d for d in lowest if lo <= d <= hi and d not in found}
+    wins = Counter(a for _, a in previous.values() if a)
+    for code in sorted(candidates, key=lambda c: -wins[c])[:max_lookups]:
+        if not need:
+            break
+        prices = lookup(code)
+        if prices is None:
+            break
+        for d in matching_dates(lowest, prices):
+            if not found.get(d):
+                found[d] = code
+        need = {d for d in need if not found.get(d)}
+    else:
+        found.update(dict.fromkeys(need, ""))
+    return [replace(q, airline=found.get(q.depart_date)) for q in quotes]
 
 
 DUE_SLACK = timedelta(minutes=5)  # 定时器有抖动，提前这么久也算到点
@@ -83,15 +142,34 @@ def collect(
                 break
         return None
 
+    by_airline = getattr(source, "fetch_oneway_by_airline", None)
+    candidates = cfg.collector.airlines if by_airline else []
+
+    def oneway(route: RouteConfig, o: str, d: str, reverse: bool) -> int:
+        """抓一个方向的单程日历（并识别航司），返回入库条数。"""
+        quotes = call(f"{o}→{d} 单程", lambda: source.fetch_oneway(o, d, today))
+        if not quotes:
+            return 0
+        quotes = [q for q in quotes if q.depart_date >= today]
+        if candidates and cfg.collector.airline_lookups > 0:
+
+            def lookup(code: str) -> dict[date, float] | None:
+                rows = call(f"{o}→{d} 航司 {code}", lambda: by_airline(o, d, today, code))
+                return None if rows is None else {q.depart_date: q.price for q in rows}
+
+            quotes = attribute_airlines(
+                quotes,
+                repo.latest_oneway_detail(conn, o, d),
+                airline_need_range(route, today, reverse),
+                candidates,
+                cfg.collector.airline_lookups,
+                lookup,
+            )
+        return repo.save_oneway(conn, run_id, quotes, now())
+
     for route in cfg.routes:
         o, d = route.origin, route.dest
-        n = 0
-        out = call(f"{o}→{d} 单程", lambda o=o, d=d: source.fetch_oneway(o, d, today))
-        if out:
-            n += repo.save_oneway(conn, run_id, [q for q in out if q.depart_date >= today], now())
-        back = call(f"{d}→{o} 单程", lambda o=o, d=d: source.fetch_oneway(d, o, today))
-        if back:
-            n += repo.save_oneway(conn, run_id, [q for q in back if q.depart_date >= today], now())
+        n = oneway(route, o, d, reverse=False) + oneway(route, d, o, reverse=True)
         depart = route.flex.start if route.flex.start and route.flex.start > today else today
         depart = max(depart, today + timedelta(days=1))
         rt = call(

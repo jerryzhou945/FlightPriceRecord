@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from farerecord.airlines import DEFAULT_AIRLINES, normalize_codes
+
 ROOT = Path(__file__).resolve().parent.parent
 MIN_INTERVAL_MINUTES = 30  # 定时抓取的最短间隔，避免对携程造成压力
 
@@ -50,6 +52,10 @@ class CollectorConfig:
     request_interval_seconds: float = 3.0
     timeout_seconds: float = 25.0
     interval_minutes: int = 60  # 定时抓取间隔；不低于 MIN_INTERVAL_MINUTES
+    airlines: list[str] = field(
+        default_factory=lambda: list(DEFAULT_AIRLINES)
+    )  # 空列表 = 不识别航司
+    airline_lookups: int = 8  # 每次抓取、每个方向最多额外查几家航司
 
 
 @dataclass
@@ -135,6 +141,8 @@ def parse_config(data: dict[str, Any], root: Path = ROOT) -> AppConfig:
             request_interval_seconds=float(c.get("request_interval_seconds", 3)),
             timeout_seconds=float(c.get("timeout_seconds", 25)),
             interval_minutes=max(MIN_INTERVAL_MINUTES, int(c.get("interval_minutes", 60) or 60)),
+            airlines=normalize_codes(c.get("airlines")),
+            airline_lookups=max(0, min(20, int(c.get("airline_lookups", 8)))),
         ),
     )
 

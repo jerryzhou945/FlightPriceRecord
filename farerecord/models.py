@@ -8,12 +8,13 @@ from datetime import date
 
 @dataclass(frozen=True, slots=True)
 class OnewayQuote:
-    """某方向某天的单程最低价。"""
+    """某方向某天的单程最低价。airline 为出这个最低价的航司二字码（识别不出为 None）。"""
 
     origin: str
     dest: str
     depart_date: date
     price: float
+    airline: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

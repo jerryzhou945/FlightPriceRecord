@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 from farerecord import repository as repo
+from farerecord.airlines import airline_name
 from farerecord.analysis.flex import FlexQuery
 from farerecord.analysis.history import flex_low_history
 from farerecord.config import AppConfig, RouteConfig
@@ -100,7 +101,18 @@ def evaluate_route(
     return alerts, cur, info
 
 
-def build_price_message(route: RouteConfig, trip: Trip, alerts: list[Alert], info: dict) -> Message:
+def _airline_suffix(code: str | None) -> str:
+    return f" · {airline_name(code)} {code}" if code else ""
+
+
+def build_price_message(
+    route: RouteConfig,
+    trip: Trip,
+    alerts: list[Alert],
+    info: dict,
+    airlines: tuple[str | None, str | None] = (None, None),
+) -> Message:
+    """airlines：(去程航司, 回程航司) 二字码，识别不出为 None。"""
     from farerecord.api.app import ctrip_url
 
     rules = sorted({a.rule for a in alerts}, key=_PRIORITY.index)
@@ -112,9 +124,9 @@ def build_price_message(route: RouteConfig, trip: Trip, alerts: list[Alert], inf
         f"### 🔻 {route.name} {head} ¥{price:,.0f}",
         "",
         f"- 去程 {trip.depart_date:%m/%d} {_wd(trip.depart_date)} {route.origin}→{route.dest}"
-        f" ¥{trip.out_price:,.0f}",
+        f" ¥{trip.out_price:,.0f}{_airline_suffix(airlines[0])}",
         f"- 回程 {trip.return_date:%m/%d} {_wd(trip.return_date)} {route.dest}→{route.origin}"
-        f" ¥{trip.ret_price:,.0f}",
+        f" ¥{trip.ret_price:,.0f}{_airline_suffix(airlines[1])}",
         f"- {trip.days} 天"
         + (f" · 目标价 ¥{route.target_price:,.0f}" if route.target_price else ""),
     ]

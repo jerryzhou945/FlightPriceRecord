@@ -4,8 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from farerecord import db
+from farerecord import repository as repo
 from farerecord.api.app import create_app, ctrip_url
 from farerecord.config import parse_config
+from farerecord.models import OnewayQuote
 from tests.conftest import daterange, seed_run
 from tests.test_collector import FakeSource
 
@@ -83,8 +85,8 @@ def test_flex(setup) -> None:
     assert [h["price"] for h in body["low_history"]] == [8000, 7571]
     assert body["low_stats"]["is_new_low"] is True
     assert body["suggestions"]
-    assert body["leg_lows"]["out"] == {"date": "2026-12-30", "price": 3846}
-    assert body["leg_lows"]["ret"] == {"date": "2027-01-29", "price": 3725}
+    assert body["leg_lows"]["out"] == {"date": "2026-12-30", "price": 3846, "airline": None}
+    assert body["leg_lows"]["ret"] == {"date": "2027-01-29", "price": 3725, "airline": None}
     bad = client.get("/api/flex", params={**params, "start": "2027-01-01"})
     assert bad.status_code == 400
 
@@ -152,3 +154,30 @@ def test_alerts_endpoint(setup) -> None:
     rules = {r["key"]: r for r in body["rules"]}
     assert rules["target"]["enabled"] and "7,000" in rules["target"]["title"]
     assert body["log"] == []
+
+
+def test_airlines_in_calendar_flex_and_history(setup) -> None:
+    client, cfg = setup
+    conn = db.connect(cfg.database)
+    t = "2026-11-11T00:00:00+00:00"
+    run_id = repo.start_run(conn, "test", t)
+    repo.save_oneway(conn, run_id, [OnewayQuote("CHI", "SHA", D, 3800, "CX")], t)
+    repo.save_oneway(conn, run_id, [OnewayQuote("SHA", "CHI", R, 3700, "KE")], t)
+    repo.save_oneway(conn, run_id, [OnewayQuote("SHA", "CHI", date(2027, 1, 28), 3900, "")], t)
+    repo.finish_run(conn, run_id, "ok", 3, finished_at=t)
+    conn.close()
+
+    cal = client.get("/api/calendar", params={"origin": "CHI", "dest": "SHA", "month": "2026-12"})
+    assert cal.json()["days"][0]["airline"] == {"code": "CX", "name": "国泰航空"}
+    params = {"origin": "CHI", "dest": "SHA", "start": "2026-12-01", "end": "2026-12-31"}
+    best = client.get("/api/flex", params={**params, "min": 25, "max": 35}).json()["best"]
+    assert best["out_airline"]["code"] == "CX" and best["ret_airline"]["name"] == "大韩航空"
+    flex = client.get("/api/flex", params={**params, "min": 29, "max": 29}).json()
+    assert flex["best"]["ret_airline"] is None  # 查过但没对上的日期不显示航司
+    h = client.get(
+        "/api/history",
+        params={"origin": "CHI", "dest": "SHA", "depart": D.isoformat(), "ret": R.isoformat()},
+    )
+    body = h.json()
+    assert body["out_airline"]["code"] == "CX" and body["ret_airline"]["code"] == "KE"
+    assert body["legs"] == {"out": 3800, "ret": 3700}

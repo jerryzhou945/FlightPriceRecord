@@ -2,6 +2,8 @@
 
 - 单程模式：一次请求返回某方向未来约 366 天每天的最低含税价
 - 往返模式：只返回携程缓存的短途组合（停留 ≤ 14 天），长途组合不在其中
+- 航司：响应里的 airLine / flightNo 字段在国际航线上是空的；但请求可以带航司筛选
+  （calendarSelections 的 selectionType 9），返回该航司每天的最低价
 
 只使用公开匿名接口，不带会话或设备凭据，不做任何反爬绕过。
 """
@@ -40,7 +42,10 @@ HEADERS = {
 _DATE_RE = re.compile(r"/Date\((-?\d+)(?:[+-]\d{4})?\)/")
 
 
-def build_payload(origin: str, dest: str, start: date, ret: date | None = None) -> dict[str, Any]:
+def build_payload(
+    origin: str, dest: str, start: date, ret: date | None = None, airline: str | None = None
+) -> dict[str, Any]:
+    """airline：航司二字码，只看这家航司的每日最低价（日历页自带的航司筛选）。"""
     payload: dict[str, Any] = {
         "searchType": 2,  # 2 = 国际/地区
         "departNewCityCode": origin.upper(),
@@ -58,6 +63,10 @@ def build_payload(origin: str, dest: str, start: date, ret: date | None = None) 
     }
     if ret:
         payload["returnDate"] = ret.isoformat()
+    if airline:
+        payload["calendarSelections"].append(
+            {"selectionType": 9, "selectionContent": [airline.upper()]}
+        )
     return payload
 
 
@@ -144,6 +153,16 @@ class CtripCalendarSource:
 
     def fetch_oneway(self, origin: str, dest: str, start: date) -> list[OnewayQuote]:
         return parse_oneway(self._post(build_payload(origin, dest, start)), origin, dest)
+
+    def fetch_oneway_by_airline(
+        self, origin: str, dest: str, start: date, airline: str
+    ) -> list[OnewayQuote]:
+        """某家航司在该方向每天的单程最低价（没有报价的日期不返回）。"""
+        data = self._post(build_payload(origin, dest, start, airline=airline))
+        return [
+            OnewayQuote(q.origin, q.dest, q.depart_date, q.price, airline.upper())
+            for q in parse_oneway(data, origin, dest)
+        ]
 
     def fetch_roundtrip_cache(
         self, origin: str, dest: str, depart: date, ret: date

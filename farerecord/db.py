@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -60,6 +60,9 @@ _MIGRATIONS: dict[int, str] = {
         sent_at     TEXT NOT NULL
     );
     CREATE INDEX ix_alert_dedupe ON alert_log(rule, dedupe_key);
+    """,
+    2: """
+    ALTER TABLE oneway_quote ADD COLUMN airline TEXT;   -- 出最低价的航司二字码，可为空
     """,
 }
 
