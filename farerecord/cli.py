@@ -117,6 +117,23 @@ def cmd_flex(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from farerecord.api.app import create_app
+
+    cfg = load_config(args.config)
+    url = f"http://{args.host}:{args.port}"
+    print(f"航价记已启动：{url}  （Ctrl+C 退出）")
+    if args.open:
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    uvicorn.run(create_app(cfg), host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 def _run_alerts(conn, cfg, res) -> None:
     """抓取后评估提醒规则（M5 实现）。"""
     try:
@@ -148,6 +165,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--ideal", type=int, help="理想天数")
     s.add_argument("--top", type=int, default=10, help="显示前 N 个组合")
     s.set_defaults(func=cmd_flex)
+
+    s = sub.add_parser("serve", help="启动网页看板")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--open", action="store_true", help="启动后自动打开浏览器")
+    s.set_defaults(func=cmd_serve)
     return p
 
 
