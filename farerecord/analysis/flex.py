@@ -51,15 +51,17 @@ class FlexResult:
         return self.best_ideal.best_price - self.best.best_price
 
     def top(self, n: int = 10) -> list[Trip]:
-        return sorted(self.trips, key=_sort_key)[:n]
+        ideal = self.query.ideal_days
+        return sorted(self.trips, key=lambda t: _sort_key(t, ideal))[:n]
 
 
-def _sort_key(t: Trip) -> tuple[float, int, date]:
-    return (t.best_price, abs(t.days), t.depart_date)
+def _sort_key(t: Trip, ideal: int | None = None) -> tuple[float, int, date]:
+    """价格优先；同价时选更接近理想天数的，再选更早出发的。"""
+    return (t.best_price, abs(t.days - ideal) if ideal else 0, t.depart_date)
 
 
-def _min(a: Trip | None, b: Trip) -> Trip:
-    return b if a is None or _sort_key(b) < _sort_key(a) else a
+def _min(a: Trip | None, b: Trip, ideal: int | None = None) -> Trip:
+    return b if a is None or _sort_key(b, ideal) < _sort_key(a, ideal) else a
 
 
 def search(
@@ -85,11 +87,12 @@ def search(
                 continue
             t = Trip(d, r, o, b, rt.get((d, r)))
             trips.append(t)
-            best = _min(best, t)
-            if s == query.ideal_days:
-                best_ideal = _min(best_ideal, t)
-            by_days[s] = _min(by_days.get(s), t)
-            by_depart[d] = _min(by_depart.get(d), t)
+            ideal = query.ideal_days
+            best = _min(best, t, ideal)
+            if s == ideal:
+                best_ideal = _min(best_ideal, t, ideal)
+            by_days[s] = _min(by_days.get(s), t, ideal)
+            by_depart[d] = _min(by_depart.get(d), t, ideal)
     return FlexResult(query, trips, best, best_ideal, by_days, by_depart)
 
 

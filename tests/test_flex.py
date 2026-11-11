@@ -42,6 +42,13 @@ def test_ideal_saving_and_suggestions() -> None:
     assert "省 ¥2,000" in text
 
 
+def test_ties_prefer_ideal_days() -> None:
+    out = {DEC1: 4000, date(2026, 12, 2): 4000}
+    back = {date(2026, 12, 31): 4000}
+    res = search(out, back, FlexQuery(DEC1, date(2026, 12, 2), 25, 35, 29))
+    assert res.best.days == 29 and res.top(1)[0].days == 29
+
+
 def test_missing_dates_and_rt_cache() -> None:
     out = {DEC1: 4000}
     back = {date(2026, 12, 8): 4000}
