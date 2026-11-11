@@ -258,7 +258,7 @@ main { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; paddin
 .legend .l4::before { background: var(--up); }
 
 /* ---------- 弹性行程 ---------- */
-.planner { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.planner { display: grid; grid-template-columns: minmax(0, 372px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .controls { padding: 20px; display: grid; gap: 16px; align-content: start; min-width: 0; }
 .field { display: grid; gap: 6px; }
 .field label { font-size: 12px; color: var(--muted); }
@@ -269,6 +269,9 @@ main { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; paddin
 }
 .field .row input { flex: 1 1 0; }
 .field .row input[type="number"] { max-width: 90px; }
+/* 日期框自带的日历按钮很占地方，两个并排时收紧一点，免得撑出面板 */
+.field .row input[type="date"] { padding: 9px 6px 9px 9px; font-size: 13px; }
+.field .row input[type="date"]::-webkit-calendar-picker-indicator { margin-left: 2px; padding: 0; }
 .field input:focus-visible, .inline-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .field .tilde { color: var(--faint); }
 .best { position: relative; padding: 18px; border-radius: var(--r-md); display: grid; gap: 5px; background: linear-gradient(150deg, var(--accent-soft), transparent 70%), var(--field); border: 1px solid var(--stroke); }

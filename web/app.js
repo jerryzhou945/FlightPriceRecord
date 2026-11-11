@@ -313,7 +313,9 @@ function renderHero() {
     delta.hidden = true;
   }
   if (s && s.n > 1) {
-    $("kPct").textContent = s.is_new_low ? "历史新低" : `比 ${s.cheaper_than_pct}% 的时间便宜`;
+    $("kPct").textContent = s.is_new_low ? "历史新低"
+      : s.high > s.low && s.current >= s.high ? "近期最高点"
+      : `比 ${s.cheaper_than_pct}% 的时间便宜`;
     $("kPctMark").style.left = (s.high === s.low ? 50 : ((s.current - s.low) / (s.high - s.low)) * 100) + "%";
     $("kMin").textContent = yuan(s.low);
     $("kMax").textContent = yuan(s.high);
@@ -468,7 +470,7 @@ function renderTrend() {
   trendChart.setOption({
     animationDuration: 400,
     textStyle: baseText(),
-    grid: { left: 50, right: 14, top: 22, bottom: 28 },
+    grid: { left: 58, right: 14, top: 22, bottom: 28 },
     legend: manual.length ? { right: 0, top: 0, textStyle: { color: tok("--muted") }, itemWidth: 12, itemHeight: 8 } : undefined,
     tooltip: {
       trigger: "axis", ...tooltipStyle(), axisPointer: { lineStyle: { color: tok("--faint") } },
@@ -487,7 +489,7 @@ function renderTrend() {
         formatter: (v) => { const d = new Date(v); return hourly ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : `${d.getMonth() + 1}/${d.getDate()}`; } },
       splitLine: { show: false } },
     yAxis: { type: "value", scale: true, splitNumber: 4,
-      axisLabel: { color: tok("--muted"), formatter: (v) => "¥" + (v / 1000).toFixed(1) + "k" },
+      axisLabel: { color: tok("--muted"), formatter: (v) => yuan(v) },  // 小时级波动常常只有几十元，不能缩写成 k
       splitLine: { lineStyle: { color: tok("--grid") } } },
     series,
   }, true);
@@ -792,6 +794,7 @@ async function boot() {
     rerenderCharts();
   });
   showView((location.hash || "#overview").slice(1), false);
+  addEventListener("hashchange", () => showView((location.hash || "#overview").slice(1), false));
 
   try {
     state.routes = await api("/api/routes");
