@@ -311,6 +311,13 @@ def create_app(
             "errors": res.errors,
         }
 
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):  # type: ignore[no-untyped-def]
+        resp = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            resp.headers.setdefault("Cache-Control", "no-cache")
+        return resp
+
     if web_dir and web_dir.is_dir():
         app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
     return app
