@@ -267,6 +267,57 @@ def create_app(
             "n_runs": conn.execute("SELECT COUNT(*) FROM fetch_run").fetchone()[0],
         }
 
+    @app.get("/api/alerts")
+    def alerts(conn: Conn, origin: str | None = None, dest: str | None = None) -> dict[str, Any]:
+        from farerecord.alerts import recent_log
+        from farerecord.alerts.notifiers import make_notifier
+
+        n = make_notifier(cfg.alerts.channel)
+        route = cfg.route(origin, dest) if origin and dest else None
+        route = route or (cfg.routes[0] if cfg.routes else None)
+        a = cfg.alerts
+        qh = f"{a.quiet_hours[0]:%H:%M}–{a.quiet_hours[1]:%H:%M}" if a.quiet_hours else None
+        target = route.target_price if route else None
+        rules = [
+            {
+                "key": "target",
+                "title": f"低于目标价 ¥{target:,.0f}" if target else "低于目标价",
+                "detail": "弹性窗口内最低往返估价跌破目标",
+                "enabled": bool(target),
+            },
+            {
+                "key": "new_low",
+                "title": "出现历史新低",
+                "detail": "比此前每次抓取的窗口最低价都低",
+                "enabled": a.new_low,
+            },
+            {
+                "key": "drop",
+                "title": f"24 小时跌幅超过 {a.drop_percent:g}%",
+                "detail": "和约 24 小时前的窗口最低价相比",
+                "enabled": a.drop_percent > 0,
+            },
+            {
+                "key": "fail",
+                "title": f"连续 {a.fail_streak} 次抓取失败",
+                "detail": "携程接口变化或网络问题时提醒你",
+                "enabled": a.fail_streak > 0,
+            },
+            {
+                "key": "quiet",
+                "title": "夜间免打扰",
+                "detail": f"{qh} 之间的提醒推迟到之后的抓取再发" if qh else "未设置",
+                "enabled": bool(qh),
+            },
+        ]
+        return {
+            "channel": n.name,
+            "channel_label": n.label,
+            "configured": n.name != "console" and n.configured,
+            "rules": rules,
+            "log": recent_log(conn, 20),
+        }
+
     @app.post("/api/manual-quote", status_code=201)
     def manual_quote(conn: Conn, body: ManualQuoteIn) -> dict[str, Any]:
         if body.ret <= body.depart:

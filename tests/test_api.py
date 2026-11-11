@@ -141,3 +141,12 @@ def test_ctrip_url() -> None:
         "https://flights.ctrip.com/online/list/round-chi-sha?depdate=2026-12-30_2027-01-29"
     )
     assert "oneway-sha-chi" in ctrip_url("SHA", "CHI", R)
+
+
+def test_alerts_endpoint(setup) -> None:
+    client, _ = setup
+    body = client.get("/api/alerts", params={"origin": "CHI", "dest": "SHA"}).json()
+    assert body["channel"] == "console" and body["configured"] is False
+    rules = {r["key"]: r for r in body["rules"]}
+    assert rules["target"]["enabled"] and "7,000" in rules["target"]["title"]
+    assert body["log"] == []
