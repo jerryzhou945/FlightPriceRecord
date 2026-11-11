@@ -134,6 +134,32 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_notify_test(args: argparse.Namespace) -> int:
+    from datetime import datetime
+
+    from farerecord.alerts import send_message
+    from farerecord.alerts.notifiers import make_notifier
+    from farerecord.alerts.rules import Alert, Message
+
+    cfg = load_config(args.config)
+    n = make_notifier(cfg.alerts.channel)
+    if n.name != "console" and not n.configured:
+        print(f"{n.label} 还没有配置，请在 .env 里填写密钥（见 .env.example）。")
+        return 2
+    now = datetime.now().astimezone()
+    msg = Message(
+        "航价记测试消息",
+        f"### ✅ 航价记推送测试\n\n收到这条消息说明微信提醒已经配置好了。\n\n{now:%Y-%m-%d %H:%M}",
+        None,
+        [Alert("test", f"test:{now.isoformat()}")],
+    )
+    conn = db.connect(cfg.database)
+    ok = send_message(conn, msg, n, now)
+    conn.close()
+    print(f"已发送到 {n.label}" if ok else "发送失败，查看上面的错误信息。")
+    return 0 if ok else 1
+
+
 def _run_alerts(conn, cfg, res) -> None:
     """抓取后评估提醒规则（M5 实现）。"""
     try:
@@ -165,6 +191,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--ideal", type=int, help="理想天数")
     s.add_argument("--top", type=int, default=10, help="显示前 N 个组合")
     s.set_defaults(func=cmd_flex)
+
+    s = sub.add_parser("notify-test", help="发送一条测试提醒")
+    s.set_defaults(func=cmd_notify_test)
 
     s = sub.add_parser("serve", help="启动网页看板")
     s.add_argument("--host", default="127.0.0.1")

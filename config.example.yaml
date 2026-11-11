@@ -22,9 +22,10 @@ routes:
 alerts:
   channel: wxpusher          # wxpusher | pushplus | console
   new_low: true              # 弹性窗口内最低价创历史新低
+  # channel 选 wxpusher / pushplus 时，在 .env 填写对应密钥；先用 farerecord notify-test 测试
   drop_percent: 5            # 24 小时跌幅超过 5% 提醒；0 关闭
   fail_streak: 2             # 连续失败 N 次提醒；0 关闭
-  quiet_hours: "23:00-08:00" # 北京时间免打扰；留空关闭
+  quiet_hours: "23:00-08:00" # 本机时间免打扰；留空关闭
 
 # 抓取
 collector:
