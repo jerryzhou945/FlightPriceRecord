@@ -9,12 +9,12 @@
 - [x] pyproject、ruff、pytest、GitHub Actions CI、配置模板
 
 ## M1 数据采集 `feat/m1-collector`
-- [ ] 数据库建表与连接（`db.py`、`models.py`）
-- [ ] 携程 15380 日历数据源：单程 + 往返缓存，解析与错误分类
-- [ ] 录制响应 fixture 与解析测试
-- [ ] 数据读写层 `repository.py`（最新价、历史序列）
-- [ ] `collector.py` + CLI `farerecord collect`（记录 fetch_run，失败不中断其他航线）
-- [ ] 配置加载 `config.py`（config.yaml + .env）
+- [x] 数据库建表与连接（`db.py`、`models.py`）
+- [x] 携程 15380 日历数据源：单程 + 往返缓存，解析与错误分类
+- [x] 录制响应 fixture 与解析测试
+- [x] 数据读写层 `repository.py`（最新价、历史序列）
+- [x] `collector.py` + CLI `farerecord collect`（记录 fetch_run，失败不中断其他航线）
+- [x] 配置加载 `config.py`（config.yaml + .env）
 
 ## M2 分析 `feat/m2-analysis`
 - [ ] 弹性行程搜索：窗口 × 天数矩阵、Top N、理想天数微调建议
