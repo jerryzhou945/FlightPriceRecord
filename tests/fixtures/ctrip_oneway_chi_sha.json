@@ -1,0 +1,119 @@
+{
+ "responseStatus": {
+  "Timestamp": "/Date(1794357875569+0800)/",
+  "Ack": "Success",
+  "Errors": [],
+  "Extension": [
+   {
+    "Id": "flt-roc-guid",
+    "Value": "ba484afe-ef07-49d2-b963-a7a37989e42b"
+   },
+   {
+    "Id": "CLOGGING_TRACE_ID",
+    "Value": "2330632777872871955"
+   },
+   {
+    "Id": "RootMessageId",
+    "Value": "100025527-0a916e61-498432-2454677"
+   }
+  ]
+ },
+ "priceList": [
+  {
+   "departDate": "/Date(1794240000000+0800)/",
+   "price": 0,
+   "totalPrice": 0,
+   "transportPrice": 0
+  },
+  {
+   "departDate": "/Date(1794326400000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 3926.0,
+   "totalPrice": 3926.0,
+   "transportPrice": 841.0
+  },
+  {
+   "departDate": "/Date(1794412800000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 4826.0,
+   "totalPrice": 4826.0,
+   "transportPrice": 3150.0
+  },
+  {
+   "departDate": "/Date(1794499200000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 4286.0,
+   "totalPrice": 4286.0,
+   "transportPrice": 1201.0
+  },
+  {
+   "departDate": "/Date(1794585600000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 4316.0,
+   "totalPrice": 4316.0,
+   "transportPrice": 1231.0
+  },
+  {
+   "departDate": "/Date(1794672000000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 3926.0,
+   "totalPrice": 3926.0,
+   "transportPrice": 841.0
+  },
+  {
+   "departDate": "/Date(1794758400000+0800)/",
+   "price": 0,
+   "totalPrice": 0,
+   "transportPrice": 0
+  },
+  {
+   "departDate": "/Date(1794844800000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 3926.0,
+   "totalPrice": 3926.0,
+   "transportPrice": 841.0
+  },
+  {
+   "departDate": "/Date(1794931200000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 4241.0,
+   "totalPrice": 4241.0,
+   "transportPrice": 1277.0
+  },
+  {
+   "departDate": "/Date(1795017600000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 4803,
+   "totalPrice": 4803,
+   "transportPrice": 4501
+  },
+  {
+   "departDate": "/Date(1795104000000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 5502.0,
+   "totalPrice": 5502.0,
+   "transportPrice": 3771.0
+  },
+  {
+   "departDate": "/Date(1795190400000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 4336.0,
+   "totalPrice": 4336.0,
+   "transportPrice": 1184.0
+  },
+  {
+   "departDate": "/Date(1795276800000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 3823,
+   "totalPrice": 3823,
+   "transportPrice": 3521
+  },
+  {
+   "departDate": "/Date(1795363200000+0800)/",
+   "returnDate": "/Date(-62135798399433+0800)/",
+   "price": 3616.0,
+   "totalPrice": 3616.0,
+   "transportPrice": 1004.0
+  }
+ ]
+}
