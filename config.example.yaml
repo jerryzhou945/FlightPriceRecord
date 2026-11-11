@@ -1,0 +1,32 @@
+# 复制为 config.yaml 后修改。密钥放在 .env，不要写在这里。
+
+# 数据库位置（相对项目根目录）
+database: data/farerecord.db
+
+# 关注的航线。城市码使用携程城市三字码（CHI=芝加哥，SHA=上海，BJS=北京 …）
+routes:
+  - name: 芝加哥 ⇄ 上海
+    origin: CHI
+    dest: SHA
+    # 弹性行程默认参数（网页里也可以临时修改）
+    flex:
+      start: 2026-12-01      # 出发窗口开始
+      end: 2026-12-31        # 出发窗口结束
+      min_days: 25           # 最短游玩天数
+      max_days: 35           # 最长游玩天数
+      ideal_days: 30         # 理想天数（用于“微调能省多少”）
+    # 低于这个往返估价就提醒（人民币）；留空则不启用
+    target_price: 7000
+
+# 提醒规则
+alerts:
+  channel: wxpusher          # wxpusher | pushplus | console
+  new_low: true              # 弹性窗口内最低价创历史新低
+  drop_percent: 5            # 24 小时跌幅超过 5% 提醒；0 关闭
+  fail_streak: 2             # 连续失败 N 次提醒；0 关闭
+  quiet_hours: "23:00-08:00" # 北京时间免打扰；留空关闭
+
+# 抓取
+collector:
+  request_interval_seconds: 3
+  timeout_seconds: 25

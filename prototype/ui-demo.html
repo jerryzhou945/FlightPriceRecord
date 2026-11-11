@@ -1,0 +1,709 @@
+<title>航价记</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sticky glass bar → KPI row → trend + calendar → flexible-trip planner → alerts. Monochrome base, glass panels over drifting grey light, one green for "cheap". */
+:root {
+  --bg: #ffffff;
+  --fg: #0b0b0c;
+  --muted: rgba(11, 11, 12, 0.56);
+  --faint: rgba(11, 11, 12, 0.34);
+  --glass: rgba(255, 255, 255, 0.52);
+  --glass-strong: rgba(255, 255, 255, 0.82);
+  --stroke: rgba(11, 11, 12, 0.09);
+  --hi: rgba(255, 255, 255, 0.9);
+  --grid: rgba(11, 11, 12, 0.06);
+  --area: rgba(11, 11, 12, 0.10);
+  --orb-a: rgba(11, 11, 12, 0.16);
+  --orb-b: rgba(11, 11, 12, 0.09);
+  --down: #0f9d63;
+  --down-soft: rgba(15, 157, 99, 0.13);
+  --up: #d23c3c;
+  --up-soft: rgba(210, 60, 60, 0.09);
+  --heat-0: #0f9d63;
+  --heat-1: #a3d6bf;
+  --heat-2: #ededee;
+  --shadow: 0 10px 40px rgba(0, 0, 0, 0.06);
+  --font-display: "Sora", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-body: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Sora", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --r-lg: 22px;
+  --r-md: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000; --fg: #f4f4f5; --muted: rgba(244,244,245,0.58); --faint: rgba(244,244,245,0.32);
+    --glass: rgba(255,255,255,0.055); --glass-strong: rgba(24,24,26,0.86); --stroke: rgba(255,255,255,0.10);
+    --hi: rgba(255,255,255,0.10); --grid: rgba(255,255,255,0.06); --area: rgba(255,255,255,0.10);
+    --orb-a: rgba(255,255,255,0.15); --orb-b: rgba(255,255,255,0.07);
+    --down: #34d399; --down-soft: rgba(52,211,153,0.14); --up: #f87171; --up-soft: rgba(248,113,113,0.10);
+    --heat-0: #34d399; --heat-1: #1d5a44; --heat-2: #161618; --shadow: 0 10px 40px rgba(0,0,0,0.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #000000; --fg: #f4f4f5; --muted: rgba(244,244,245,0.58); --faint: rgba(244,244,245,0.32);
+  --glass: rgba(255,255,255,0.055); --glass-strong: rgba(24,24,26,0.86); --stroke: rgba(255,255,255,0.10);
+  --hi: rgba(255,255,255,0.10); --grid: rgba(255,255,255,0.06); --area: rgba(255,255,255,0.10);
+  --orb-a: rgba(255,255,255,0.15); --orb-b: rgba(255,255,255,0.07);
+  --down: #34d399; --down-soft: rgba(52,211,153,0.14); --up: #f87171; --up-soft: rgba(248,113,113,0.10);
+  --heat-0: #34d399; --heat-1: #1d5a44; --heat-2: #161618; --shadow: 0 10px 40px rgba(0,0,0,0.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 14px; line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 30; background: var(--glass-strong);
+}
+.num { font-family: var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.mono { font-family: var(--font-mono); }
+
+/* ambient light so the glass has something to refract */
+.ambient { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.orb { position: absolute; border-radius: 50%; filter: blur(70px); }
+.orb.a { width: 46vmax; height: 46vmax; left: -12vmax; top: -14vmax; background: radial-gradient(circle, var(--orb-a), transparent 65%); animation: drift 26s ease-in-out infinite alternate; }
+.orb.b { width: 38vmax; height: 38vmax; right: -10vmax; top: 22vh; background: radial-gradient(circle, var(--orb-b), transparent 65%); animation: drift 32s ease-in-out infinite alternate-reverse; }
+.orb.c { width: 30vmax; height: 30vmax; left: 30vw; bottom: -14vmax; background: radial-gradient(circle, var(--orb-a), transparent 65%); animation: drift 38s ease-in-out infinite alternate; }
+@keyframes drift { to { transform: translate(6vmax, 4vmax) scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .orb { animation: none; } }
+
+.glass {
+  position: relative;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 var(--hi), var(--shadow);
+}
+
+/* top bar */
+.bar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.bar-inner {
+  max-width: 1180px; margin: 0 auto;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 14px; border-radius: 18px;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: 0.02em; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--fg); color: var(--bg); }
+.route {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--stroke); background: var(--glass);
+  font-size: 13px;
+}
+.route .code { font-family: var(--font-mono); font-weight: 500; }
+.route .city { color: var(--muted); }
+nav.tabs { display: flex; gap: 4px; margin-left: auto; }
+nav.tabs a {
+  color: var(--muted); text-decoration: none; font-size: 13px;
+  padding: 6px 12px; border-radius: 999px;
+}
+nav.tabs a:hover, nav.tabs a:focus-visible { color: var(--fg); background: var(--glass); outline: none; }
+nav.tabs a.on { color: var(--bg); background: var(--fg); }
+.status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--down); box-shadow: 0 0 0 3px var(--down-soft); }
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--stroke);
+  background: var(--glass); color: var(--fg); display: grid; place-items: center; cursor: pointer;
+}
+.icon-btn:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+main {
+  position: relative; z-index: 1;
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 18px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 18px;
+}
+.section-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.section-head h2 { font-family: var(--font-display); font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+.section-head p { margin: 0; color: var(--muted); font-size: 13px; }
+.sample { font-size: 11px; letter-spacing: 0.06em; color: var(--muted); border: 1px dashed var(--faint); border-radius: 999px; padding: 2px 8px; }
+
+/* KPI row */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.kpi { padding: 16px 18px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.kpi .label { font-size: 12px; color: var(--muted); letter-spacing: 0.04em; }
+.kpi .value { font-size: 28px; font-weight: 600; line-height: 1.1; }
+.kpi .sub { font-size: 12px; color: var(--muted); }
+.delta { font-size: 12px; font-weight: 500; padding: 1px 7px; border-radius: 999px; }
+.delta.down { color: var(--down); background: var(--down-soft); }
+.delta.up { color: var(--up); background: var(--up-soft); }
+.range { position: relative; height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--down), var(--faint) 55%, var(--up)); margin-top: 6px; opacity: 0.9; }
+.range i { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); border: 3px solid var(--fg); transform: translate(-50%, -50%); }
+.range-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); }
+
+/* cards */
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 14px; }
+.card { padding: 18px; min-width: 0; }
+.card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.card-head h3 { margin: 0; font-size: 15px; font-weight: 600; font-family: var(--font-display); }
+.card-head .hint { color: var(--muted); font-size: 12px; }
+.seg { margin-left: auto; display: inline-flex; padding: 3px; border-radius: 999px; border: 1px solid var(--stroke); background: var(--glass); }
+.seg button {
+  border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+  padding: 4px 11px; border-radius: 999px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.seg button:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.chart { width: 100%; height: 300px; }
+
+/* calendar */
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
+.cal .wd { font-size: 11px; color: var(--faint); text-align: center; padding-bottom: 2px; }
+.cal .day {
+  border-radius: 10px; padding: 6px 4px 5px; text-align: center; min-height: 50px;
+  border: 1px solid transparent; display: grid; align-content: center; gap: 1px;
+}
+.cal .day .d { font-size: 11px; color: var(--muted); }
+.cal .day .p { font-size: 12px; font-weight: 600; }
+.cal .day.t0 { background: var(--down-soft); border-color: var(--down-soft); }
+.cal .day.t0 .p { color: var(--down); }
+.cal .day.t4 .p { color: var(--up); }
+.cal .day.none .p { color: var(--faint); font-weight: 400; }
+.cal .day.best { border-color: var(--down); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 10px; }
+.legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+.legend .l0::before { background: var(--down); }
+.legend .l4::before { background: var(--up); }
+
+/* planner */
+.planner { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 14px; }
+.controls { padding: 18px; display: grid; gap: 14px; align-content: start; }
+.field { display: grid; gap: 6px; }
+.field label { font-size: 12px; color: var(--muted); }
+.field .row { display: flex; gap: 8px; align-items: center; }
+.field input {
+  width: 100%; min-width: 0; font: inherit; font-family: var(--font-display); font-variant-numeric: tabular-nums;
+  color: var(--fg); background: var(--glass); border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 10px;
+}
+.field input:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.field .tilde { color: var(--faint); }
+.best {
+  padding: 16px; border-radius: var(--r-md); background: var(--fg); color: var(--bg); display: grid; gap: 4px;
+}
+.best .k { font-size: 12px; opacity: 0.7; }
+.best .v { font-size: 30px; font-weight: 700; line-height: 1.1; }
+.best .trip { font-size: 13px; }
+.best a {
+  margin-top: 8px; justify-self: start; color: var(--fg); background: var(--bg); text-decoration: none;
+  font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+}
+.best a:focus-visible { outline: 2px solid var(--bg); outline-offset: 2px; }
+.tip { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.tip b { color: var(--down); font-weight: 600; }
+.heat-wrap { overflow-x: auto; }
+.heat { height: 380px; min-width: 640px; }
+.toplist { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+.toplist th { text-align: left; font-weight: 500; color: var(--faint); font-size: 11px; letter-spacing: 0.04em; padding: 6px 8px; }
+.toplist td { padding: 8px; border-top: 1px solid var(--stroke); white-space: nowrap; }
+.toplist tr { cursor: pointer; }
+.toplist tbody tr:hover td { background: var(--glass); }
+.toplist tr.sel td { background: var(--down-soft); }
+.toplist td.price { font-weight: 600; text-align: right; }
+.toplist th.price { text-align: right; }
+.table-wrap { overflow-x: auto; }
+
+/* alerts */
+.rules { display: grid; gap: 8px; }
+.rule { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-md); border: 1px solid var(--stroke); background: var(--glass); }
+.rule .t { font-weight: 500; }
+.rule .s { font-size: 12px; color: var(--muted); }
+.switch { margin-left: auto; position: relative; width: 40px; height: 22px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; margin: 0; z-index: 1; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--faint); transition: background .2s; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); transition: transform .2s; }
+.switch input:checked + span { background: var(--down); }
+.switch input:checked + span::after { transform: translateX(18px); }
+.switch input:focus-visible + span { outline: 2px solid var(--fg); outline-offset: 2px; }
+.wx { display: grid; gap: 10px; }
+.wx .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.wx .avatar { width: 28px; height: 28px; border-radius: 8px; background: var(--fg); color: var(--bg); display: grid; place-items: center; font-size: 13px; font-weight: 700; font-family: var(--font-display); }
+.bubble { padding: 14px 16px; border-radius: 4px 16px 16px 16px; background: var(--glass-strong); border: 1px solid var(--stroke); display: grid; gap: 4px; max-width: 380px; }
+.bubble .h { font-weight: 600; color: var(--down); }
+.bubble .l { font-size: 13px; }
+.bubble .m { font-size: 12px; color: var(--muted); }
+.health { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
+.health div { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--stroke); }
+.health .k { font-size: 11px; color: var(--muted); }
+.health .v { font-size: 15px; font-weight: 600; }
+
+footer { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding-block: 0 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); color: var(--faint); font-size: 12px; line-height: 1.7; }
+
+@media (max-width: 980px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-2, .planner { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  nav.tabs { margin-left: 0; order: 5; width: 100%; }
+  .status { display: none; }
+  .kpi .value { font-size: 23px; }
+  .health { grid-template-columns: minmax(0, 1fr); }
+  .chart { height: 250px; }
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
+
+<div class="ambient" aria-hidden="true"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div></div>
+
+<header class="bar">
+  <div class="bar-inner glass">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15.5v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V8.5l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2z"/></svg>
+      </span>
+      航价记
+    </div>
+    <div class="route" title="当前监控航线">
+      <span class="code">CHI</span><span class="city">芝加哥</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>
+      <span class="code">SHA</span><span class="city">上海</span>
+    </div>
+    <nav class="tabs" aria-label="页面分区">
+      <a href="#overview" class="on">总览</a>
+      <a href="#flex">弹性行程</a>
+      <a href="#alerts">提醒</a>
+    </nav>
+    <div class="status"><span class="dot"></span>上次抓取 18:00 · 正常</div>
+    <button class="icon-btn" id="themeBtn" type="button" aria-label="切换深色/浅色">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+  <div class="section-head" id="overview">
+    <h2>价格总览</h2>
+    <p id="ovSub">当前关注组合</p>
+    <span class="sample">走势为示例数据</span>
+  </div>
+
+  <section class="kpis" aria-label="关键指标">
+    <div class="kpi glass">
+      <div class="label">当前往返估价</div>
+      <div class="value num" id="kNow">—</div>
+      <div class="sub"><span id="kNowDelta" class="delta down">—</span> <span id="kNowTrip"></span></div>
+    </div>
+    <div class="kpi glass">
+      <div class="label">价格位置 · 近 14 天</div>
+      <div class="value num" id="kPct">—</div>
+      <div class="range" aria-hidden="true"><i id="kPctMark" style="left:50%"></i></div>
+      <div class="range-ends num"><span id="kMin">—</span><span id="kMax">—</span></div>
+    </div>
+    <div class="kpi glass">
+      <div class="label">窗口内去程最低 · CHI→SHA</div>
+      <div class="value num" id="kOut">—</div>
+      <div class="sub" id="kOutD">—</div>
+    </div>
+    <div class="kpi glass">
+      <div class="label">对应回程最低 · SHA→CHI</div>
+      <div class="value num" id="kRet">—</div>
+      <div class="sub" id="kRetD">—</div>
+    </div>
+  </section>
+
+  <section class="grid-2">
+    <div class="card glass">
+      <div class="card-head">
+        <h3>价格走势</h3>
+        <span class="hint" id="trendHint">每 6 小时记录一次</span>
+        <div class="seg" role="group" aria-label="时间范围">
+          <button type="button" data-days="7" aria-pressed="false">7天</button>
+          <button type="button" data-days="14" aria-pressed="true">14天</button>
+          <button type="button" data-days="30" aria-pressed="false">30天</button>
+        </div>
+      </div>
+      <div class="chart" id="trend" role="img" aria-label="所选往返组合的价格走势折线图"></div>
+    </div>
+    <div class="card glass">
+      <div class="card-head">
+        <h3>低价日历</h3>
+        <span class="hint">单程 · 含税</span>
+        <div class="seg" role="group" aria-label="日历方向">
+          <button type="button" data-cal="out" aria-pressed="true">12月去程</button>
+          <button type="button" data-cal="ret" aria-pressed="false">1月回程</button>
+        </div>
+      </div>
+      <div class="cal" id="cal"></div>
+      <div class="legend"><span class="l0">当月最便宜 20%</span><span class="l4">当月最贵 20%</span></div>
+    </div>
+  </section>
+
+  <div class="section-head" id="flex">
+    <h2>弹性行程</h2>
+    <p>在出发窗口和游玩天数范围内，找最便宜的去回组合</p>
+  </div>
+
+  <section class="planner">
+    <div class="controls glass">
+      <div class="field">
+        <label for="fStart">出发窗口</label>
+        <div class="row">
+          <input id="fStart" type="date" value="2026-12-01" min="2026-11-20" max="2027-01-31">
+          <span class="tilde">~</span>
+          <input id="fEnd" type="date" value="2026-12-31" min="2026-11-20" max="2027-01-31">
+        </div>
+      </div>
+      <div class="field">
+        <label for="fMin">游玩天数</label>
+        <div class="row">
+          <input id="fMin" type="number" value="25" min="3" max="60">
+          <span class="tilde">~</span>
+          <input id="fMax" type="number" value="35" min="3" max="60">
+          <span class="tilde">天</span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="fIdeal">理想天数</label>
+        <div class="row"><input id="fIdeal" type="number" value="30" min="3" max="60"><span class="tilde">天</span></div>
+      </div>
+      <div class="best" id="bestCard">
+        <div class="k">窗口内最低组合</div>
+        <div class="v num" id="bestV">—</div>
+        <div class="trip" id="bestTrip">—</div>
+        <a id="bestLink" href="#" target="_blank" rel="noopener">去携程核价 ↗</a>
+      </div>
+      <p class="tip" id="tip"></p>
+    </div>
+    <div class="card glass">
+      <div class="card-head">
+        <h3>出发日 × 游玩天数</h3>
+        <span class="hint">点格子查看该组合走势 · 价格 = 去程单程 + 回程单程</span>
+      </div>
+      <div class="heat-wrap"><div class="heat" id="heat" role="img" aria-label="出发日期与游玩天数的价格热力图"></div></div>
+      <div class="table-wrap">
+        <table class="toplist" aria-label="最便宜的组合">
+          <thead><tr><th>出发</th><th>返回</th><th>天数</th><th class="price">去程</th><th class="price">回程</th><th class="price">合计</th></tr></thead>
+          <tbody id="top"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-head" id="alerts">
+    <h2>提醒</h2>
+    <p>满足任意一条就推送到微信</p>
+  </div>
+
+  <section class="grid-2">
+    <div class="card glass">
+      <div class="card-head"><h3>提醒规则</h3></div>
+      <div class="rules">
+        <div class="rule"><div><div class="t" id="ruleTarget">低于目标价</div><div class="s">所选组合往返估价跌破目标</div></div><label class="switch"><input id="r1" type="checkbox" checked aria-label="低于目标价提醒"><span></span></label></div>
+        <div class="rule"><div><div class="t">出现历史新低</div><div class="s">比此前记录的所有价格都低</div></div><label class="switch"><input id="r2" type="checkbox" checked aria-label="历史新低提醒"><span></span></label></div>
+        <div class="rule"><div><div class="t">单日跌幅超过 5%</div><div class="s">和 24 小时前相比</div></div><label class="switch"><input id="r3" type="checkbox" aria-label="单日跌幅提醒"><span></span></label></div>
+        <div class="rule"><div><div class="t">夜间免打扰</div><div class="s">23:00–08:00 的提醒推迟到早上发送</div></div><label class="switch"><input id="r4" type="checkbox" checked aria-label="夜间免打扰"><span></span></label></div>
+      </div>
+    </div>
+    <div class="card glass">
+      <div class="card-head"><h3>微信推送预览</h3><span class="hint">WxPusher</span></div>
+      <div class="wx">
+        <div class="meta"><span class="avatar">航</span>航价记 · 刚刚</div>
+        <div class="bubble" id="wx"></div>
+      </div>
+      <div class="card-head" style="margin-top:16px;margin-bottom:6px"><h3>抓取状态</h3></div>
+      <div class="health">
+        <div><div class="k">今日成功</div><div class="v num">3 / 3</div></div>
+        <div><div class="k">下次抓取</div><div class="v num">00:00</div></div>
+        <div><div class="k">已记录</div><div class="v num">482 条</div></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  日历价格来自 2026-11-10 携程低价日历快照（经济舱、1 位成人、含税）。往返价为去程单程与回程单程相加的估价，实际往返票可能更便宜或更贵，请点“去携程核价”确认。价格走势和抓取状态为演示用的模拟数据。
+</footer>
+
+<script>
+const SNAP = {"out":{"2026-11-20":5502,"2026-11-21":4336,"2026-11-22":3823,"2026-11-23":3616,"2026-11-24":3846,"2026-11-25":3846,"2026-11-26":3912,"2026-11-27":3926,"2026-11-28":3851,"2026-11-29":3926,"2026-11-30":3756,"2026-12-02":3846,"2026-12-03":4266,"2026-12-04":4676,"2026-12-05":4366,"2026-12-06":3782,"2026-12-07":4373,"2026-12-08":4373,"2026-12-09":4826,"2026-12-10":5303,"2026-12-11":5521,"2026-12-12":6679,"2026-12-13":6205,"2026-12-14":7409,"2026-12-15":6135,"2026-12-16":9167,"2026-12-17":10570,"2026-12-18":9892,"2026-12-19":9786,"2026-12-20":8150,"2026-12-21":8791,"2026-12-22":6377,"2026-12-23":5700,"2026-12-24":5431,"2026-12-25":5180,"2026-12-26":5622,"2026-12-27":4488,"2026-12-28":4491,"2026-12-29":4488,"2026-12-30":3846,"2026-12-31":3846,"2027-01-01":4246,"2027-01-02":4246,"2027-01-03":3926,"2027-01-04":3846,"2027-01-05":3846,"2027-01-06":3846,"2027-01-07":3846,"2027-01-08":4246,"2027-01-09":4246,"2027-01-10":3576,"2027-01-11":3576,"2027-01-12":3576,"2027-01-13":3526,"2027-01-14":3526,"2027-01-15":3662,"2027-01-16":3662,"2027-01-17":3567,"2027-01-18":3526,"2027-01-19":3526,"2027-01-20":3489,"2027-01-21":3489,"2027-01-22":3606,"2027-01-23":3606,"2027-01-24":3522,"2027-01-25":3489,"2027-01-26":3489,"2027-01-27":3489,"2027-01-28":3489,"2027-01-29":3604,"2027-01-30":3926,"2027-01-31":3522},"ret":{"2026-12-20":3771,"2026-12-21":3797,"2026-12-22":3744,"2026-12-23":3936,"2026-12-24":3770,"2026-12-25":3942,"2026-12-26":4487,"2026-12-27":4161,"2026-12-28":4365,"2026-12-29":4922,"2026-12-30":5422,"2026-12-31":7995,"2027-01-01":10208,"2027-01-02":8748,"2027-01-03":7263,"2027-01-04":6305,"2027-01-05":6337,"2027-01-06":6527,"2027-01-07":6192,"2027-01-08":5482,"2027-01-09":6827,"2027-01-10":4954,"2027-01-11":5320,"2027-01-12":4910,"2027-01-13":4247,"2027-01-14":4412,"2027-01-15":4667,"2027-01-16":4492,"2027-01-17":4779,"2027-01-18":4052,"2027-01-19":4052,"2027-01-20":4000,"2027-01-21":4679,"2027-01-22":4674,"2027-01-23":4674,"2027-01-24":4632,"2027-01-25":4070,"2027-01-26":4071,"2027-01-27":4145,"2027-01-28":3997,"2027-01-29":3725,"2027-01-30":4348,"2027-01-31":4675,"2027-02-01":4679,"2027-02-02":4349,"2027-02-03":4349,"2027-02-04":4652,"2027-02-05":4367,"2027-02-06":5152,"2027-02-07":4154,"2027-02-08":3774,"2027-02-09":3679,"2027-02-10":4591,"2027-02-11":3419,"2027-02-12":3420,"2027-02-13":4113,"2027-02-14":4745,"2027-02-15":3979,"2027-02-16":3419,"2027-02-17":4536,"2027-02-18":3419,"2027-02-19":3419,"2027-02-20":4112,"2027-02-21":3723,"2027-02-22":3608,"2027-02-23":3419,"2027-02-24":4035,"2027-02-25":3983,"2027-02-26":3419,"2027-02-27":4131,"2027-02-28":3724}};
+const OUT = SNAP.out, RET = SNAP.ret;
+const DAY = 864e5;
+const NOW = Date.UTC(2026, 10, 10, 10); // 2026-11-10 18:00 北京时间
+const toMs = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+const toStr = ms => new Date(ms).toISOString().slice(0, 10);
+const addDays = (s, n) => toStr(toMs(s) + n * DAY);
+const md = s => `${+s.slice(5, 7)}/${+s.slice(8, 10)}`;
+const WD = "日一二三四五六";
+const wd = s => "周" + WD[new Date(toMs(s)).getUTCDay()];
+const yuan = n => "¥" + Math.round(n).toLocaleString("en-US");
+const tok = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const $ = id => document.getElementById(id);
+
+const state = { start: "2026-12-01", end: "2026-12-31", min: 25, max: 35, ideal: 30, days: 14, cal: "out", sel: null };
+
+/* ---------- flexible trip search ---------- */
+function computeTrips() {
+  const rows = [];
+  for (let t = toMs(state.start); t <= toMs(state.end); t += DAY) {
+    const d = toStr(t), o = OUT[d];
+    if (!o) continue;
+    for (let s = state.min; s <= state.max; s++) {
+      const r = addDays(d, s), b = RET[r];
+      if (b) rows.push({ d, r, s, o, b, total: o + b });
+    }
+  }
+  return rows;
+}
+const ctripUrl = t => `https://flights.ctrip.com/online/list/round-chi-sha?depdate=${t.d}_${t.r}&cabin=y_s&adult=1&child=0&infant=0`;
+
+/* ---------- simulated history for a trip (demo only) ---------- */
+function rng(seed) { return () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function hash(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h; }
+function simulate(trip) {
+  const r = rng(hash(trip.d + trip.r));
+  const pts = []; let p = trip.total;
+  for (let i = 0; i < 30 * 4; i++) {
+    pts.push([NOW - i * 6 * 3600e3, Math.round(p)]);
+    const jump = r();
+    if (jump < 0.07) p *= 1 + (0.04 + r() * 0.06);          // 低价舱位放出前更贵
+    else if (jump < 0.12) p *= 1 - (0.03 + r() * 0.04);
+    else p *= 1 + (r() - 0.47) * 0.012;
+  }
+  return pts.reverse();
+}
+
+/* ---------- charts ---------- */
+let trendChart, heatChart;
+function baseText() { return { color: tok("--muted"), fontFamily: "Sora, PingFang SC, Microsoft YaHei, sans-serif" }; }
+
+function renderTrend() {
+  const t = state.sel; if (!t) return;
+  const all = simulate(t);
+  const pts = all.filter(p => p[0] >= NOW - state.days * DAY);
+  const target = Math.floor(Math.min(...all.map(p => p[1])) * 0.97 / 100) * 100;
+  state.target = target;
+  const fg = tok("--fg"), down = tok("--down");
+  trendChart.setOption({
+    animationDuration: 500,
+    textStyle: baseText(),
+    grid: { left: 52, right: 16, top: 26, bottom: 30 },
+    tooltip: {
+      trigger: "axis", backgroundColor: tok("--glass-strong"), borderColor: tok("--stroke"),
+      textStyle: { color: fg }, valueFormatter: v => yuan(v),
+      axisPointer: { lineStyle: { color: tok("--faint") } }
+    },
+    xAxis: { type: "time", axisLine: { lineStyle: { color: tok("--stroke") } }, axisTick: { show: false },
+      axisLabel: { color: tok("--muted"), formatter: "{M}/{d}", hideOverlap: true }, splitLine: { show: false } },
+    yAxis: { type: "value", scale: true, splitNumber: 4,
+      axisLabel: { color: tok("--muted"), formatter: v => "¥" + (v / 1000).toFixed(1) + "k" },
+      splitLine: { lineStyle: { color: tok("--grid") } } },
+    series: [{
+      name: "往返估价", type: "line", data: pts, showSymbol: false, smooth: 0.15,
+      lineStyle: { width: 2, color: fg }, itemStyle: { color: fg },
+      areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: tok("--area") }, { offset: 1, color: "rgba(0,0,0,0)" }]) },
+      markPoint: { symbol: "circle", symbolSize: 9, itemStyle: { color: down, borderColor: tok("--bg"), borderWidth: 2 },
+        label: { show: true, position: "bottom", distance: 8, color: down, fontWeight: 600, formatter: p => "最低 " + yuan(p.value) },
+        data: [{ type: "min" }] },
+      markLine: { symbol: "none", silent: true, lineStyle: { type: "dashed", color: down, opacity: 0.8 },
+        label: { color: down, position: "insideEndTop", formatter: "目标 " + yuan(target) }, data: [{ yAxis: target }] }
+    }]
+  }, true);
+
+  // KPIs from the same series
+  const now = all[all.length - 1][1], prev = all[all.length - 5][1];
+  const last14 = all.filter(p => p[0] >= NOW - 14 * DAY).map(p => p[1]);
+  const lo = Math.min(...last14), hi = Math.max(...last14);
+  const cheaperThan = Math.round(last14.filter(v => v > now).length / last14.length * 100);
+  $("kNow").textContent = yuan(now);
+  const diff = now - prev;
+  $("kNowDelta").textContent = (diff <= 0 ? "↓ " : "↑ ") + yuan(Math.abs(diff)) + " 24h";
+  $("kNowDelta").className = "delta " + (diff <= 0 ? "down" : "up");
+  $("kNowTrip").textContent = `${md(t.d)} → ${md(t.r)} · ${t.s}天`;
+  $("kPct").textContent = `比 ${cheaperThan}% 时间便宜`;
+  $("kPctMark").style.left = (hi === lo ? 50 : (now - lo) / (hi - lo) * 100) + "%";
+  $("kMin").textContent = yuan(lo); $("kMax").textContent = yuan(hi);
+  $("ovSub").textContent = `${md(t.d)}（${wd(t.d)}）出发 → ${md(t.r)}（${wd(t.r)}）返回 · ${t.s} 天`;
+  $("trendHint").textContent = `${md(t.d)} → ${md(t.r)} · 每 6 小时记录一次`;
+  $("ruleTarget").textContent = `低于目标价 ${yuan(target)}`;
+  renderWx(t, now, all);
+}
+
+function renderHeat(rows) {
+  const dates = []; for (let t = toMs(state.start); t <= toMs(state.end); t += DAY) dates.push(toStr(t));
+  const stays = []; for (let s = state.min; s <= state.max; s++) stays.push(s);
+  const data = rows.map(r => [dates.indexOf(r.d), stays.indexOf(r.s), r.total]);
+  const vals = rows.map(r => r.total);
+  heatChart.setOption({
+    animation: false,
+    textStyle: baseText(),
+    grid: { left: 46, right: 10, top: 6, bottom: 66 },
+    tooltip: {
+      backgroundColor: tok("--glass-strong"), borderColor: tok("--stroke"), textStyle: { color: tok("--fg") },
+      formatter: p => { const d = dates[p.value[0]], s = stays[p.value[1]], r = addDays(d, s);
+        return `${md(d)} ${wd(d)} → ${md(r)} ${wd(r)}<br>${s} 天 · <b>${yuan(p.value[2])}</b><br><span style="opacity:.6">去 ${yuan(OUT[d])} + 回 ${yuan(RET[r])}</span>`; }
+    },
+    xAxis: { type: "category", data: dates.map(md), axisTick: { show: false }, axisLine: { show: false },
+      axisLabel: { color: tok("--muted"), interval: 1, fontSize: 10 } },
+    yAxis: { type: "category", data: stays.map(s => s + "天"), axisTick: { show: false }, axisLine: { show: false },
+      axisLabel: { color: tok("--muted"), fontSize: 10 } },
+    visualMap: { min: Math.min(...vals), max: Math.max(...vals), orient: "horizontal", left: "center", bottom: 0,
+      itemWidth: 10, itemHeight: 140, text: ["贵", "便宜"], textStyle: { color: tok("--muted"), fontSize: 11 },
+      inRange: { color: [tok("--heat-0"), tok("--heat-1"), tok("--heat-2")] }, calculable: false },
+    series: [{ type: "heatmap", data, itemStyle: { borderColor: tok("--bg"), borderWidth: 2, borderRadius: 3 },
+      emphasis: { itemStyle: { borderColor: tok("--fg"), borderWidth: 1.5 } } }]
+  }, true);
+  heatChart.off("click");
+  heatChart.on("click", p => {
+    const d = dates[p.value[0]], s = stays[p.value[1]];
+    const t = rows.find(r => r.d === d && r.s === s); if (t) select(t);
+  });
+}
+
+function renderTop(rows) {
+  const top = [...rows].sort((a, b) => a.total - b.total).slice(0, 6);
+  $("top").innerHTML = top.map((r, i) => `<tr data-i="${i}" class="${state.sel && state.sel.d === r.d && state.sel.r === r.r ? "sel" : ""}">
+    <td class="num">${md(r.d)} <span style="color:var(--faint)">${wd(r.d)}</span></td>
+    <td class="num">${md(r.r)} <span style="color:var(--faint)">${wd(r.r)}</span></td>
+    <td class="num">${r.s}</td>
+    <td class="num price" style="font-weight:400;color:var(--muted)">${yuan(r.o)}</td>
+    <td class="num price" style="font-weight:400;color:var(--muted)">${yuan(r.b)}</td>
+    <td class="num price">${yuan(r.total)}</td></tr>`).join("");
+  [...$("top").querySelectorAll("tr")].forEach(tr => tr.addEventListener("click", () => select(top[+tr.dataset.i])));
+  return top;
+}
+
+function renderPlanner() {
+  const rows = computeTrips();
+  if (!rows.length) {
+    $("bestV").textContent = "无数据"; $("bestTrip").textContent = "调整窗口或天数试试"; $("tip").textContent = "";
+    $("top").innerHTML = ""; heatChart.clear(); return;
+  }
+  const best = rows.reduce((a, b) => (b.total < a.total ? b : a));
+  $("bestV").textContent = yuan(best.total);
+  $("bestTrip").textContent = `${md(best.d)} ${wd(best.d)} → ${md(best.r)} ${wd(best.r)} · ${best.s} 天`;
+  $("bestLink").href = ctripUrl(best);
+
+  const exact = rows.filter(r => r.s === state.ideal);
+  if (exact.length) {
+    const be = exact.reduce((a, b) => (b.total < a.total ? b : a));
+    const save = be.total - best.total;
+    $("tip").innerHTML = save > 0
+      ? `正好玩 ${state.ideal} 天，最低 ${yuan(be.total)}（${md(be.d)} → ${md(be.r)}）。改成 ${best.s} 天可以再省 <b>${yuan(save)}</b>。`
+      : `正好玩 ${state.ideal} 天就是最便宜的选择：${md(be.d)} → ${md(be.r)}。`;
+  } else {
+    $("tip").textContent = `${state.ideal} 天不在当前天数范围内。`;
+  }
+  if (!state.sel || !rows.some(r => r.d === state.sel.d && r.r === state.sel.r)) state.sel = best;
+  renderHeat(rows);
+  renderTop(rows);
+  renderKpiLegs(rows);
+  renderTrend();
+}
+
+function renderKpiLegs(rows) {
+  let o = null, b = null;
+  rows.forEach(r => { if (!o || r.o < o.o) o = r; if (!b || r.b < b.b) b = r; });
+  $("kOut").textContent = yuan(o.o); $("kOutD").textContent = `${md(o.d)} ${wd(o.d)} 出发`;
+  $("kRet").textContent = yuan(b.b); $("kRetD").textContent = `${md(b.r)} ${wd(b.r)} 返回`;
+}
+
+function select(t) {
+  state.sel = t;
+  renderTrend();
+  [...$("top").querySelectorAll("tr")].forEach(tr => tr.classList.remove("sel"));
+  renderTop(computeTrips());
+}
+
+/* ---------- calendar ---------- */
+function renderCal() {
+  const isOut = state.cal === "out";
+  const map = isOut ? OUT : RET;
+  const y = isOut ? 2026 : 2027, m = isOut ? 11 : 0;
+  const first = Date.UTC(y, m, 1), daysIn = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const vals = []; for (let d = 1; d <= daysIn; d++) { const v = map[toStr(first + (d - 1) * DAY)]; if (v) vals.push(v); }
+  const sorted = [...vals].sort((a, b) => a - b);
+  const q = f => sorted[Math.floor((sorted.length - 1) * f)];
+  const q20 = q(0.2), q80 = q(0.8), min = sorted[0];
+  let html = "一二三四五六日".split("").map(c => `<div class="wd">${c}</div>`).join("");
+  const lead = (new Date(first).getUTCDay() + 6) % 7;
+  for (let i = 0; i < lead; i++) html += "<div></div>";
+  for (let d = 1; d <= daysIn; d++) {
+    const ds = toStr(first + (d - 1) * DAY), v = map[ds];
+    let cls = "day";
+    if (!v) cls += " none"; else if (v <= q20) cls += " t0"; else if (v >= q80) cls += " t4";
+    if (v === min) cls += " best";
+    html += `<div class="${cls}" title="${ds} ${v ? yuan(v) : "暂无报价"}"><span class="d">${d}</span><span class="p num">${v ? (v / 1000).toFixed(1) + "k" : "—"}</span></div>`;
+  }
+  $("cal").innerHTML = html;
+}
+
+/* ---------- wechat preview ---------- */
+function renderWx(t, now, all) {
+  const minHist = Math.min(...all.slice(0, -1).map(p => p[1]));
+  const isLow = now <= minHist;
+  $("wx").innerHTML = `
+    <div class="h">${isLow ? "🔻 历史新低" : "📉 价格下降"} ${yuan(now)}</div>
+    <div class="l">去 ${md(t.d)} CHI→SHA ${yuan(t.o)}</div>
+    <div class="l">回 ${md(t.r)} SHA→CHI ${yuan(t.b)}</div>
+    <div class="m">${t.s} 天 · 目标价 ${yuan(state.target)} · 单程组合估价</div>
+    <div class="m" style="text-decoration:underline">点此打开携程核价</div>`;
+}
+
+/* ---------- wiring ---------- */
+function bindSeg(attr, key, fn) {
+  document.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(`[data-${attr}]`).forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    state[key] = attr === "days" ? +b.dataset[attr] : b.dataset[attr];
+    fn();
+  }));
+}
+function readInputs() {
+  let s = $("fStart").value, e = $("fEnd").value;
+  if (!s || !e) return;
+  if (s > e) [s, e] = [e, s];
+  let mn = Math.max(1, +$("fMin").value || 1), mx = Math.max(1, +$("fMax").value || 1);
+  if (mn > mx) [mn, mx] = [mx, mn];
+  Object.assign(state, { start: s, end: e, min: mn, max: mx, ideal: +$("fIdeal").value || mn });
+  renderPlanner();
+}
+["fStart", "fEnd", "fMin", "fMax", "fIdeal"].forEach(id => $(id).addEventListener("change", readInputs));
+
+function effectiveDark() {
+  const a = document.documentElement.getAttribute("data-theme");
+  return a ? a === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function rerenderAll() { renderPlanner(); renderCal(); }
+$("themeBtn").addEventListener("click", () => {
+  const next = effectiveDark() ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("fr-theme", next); } catch (e) {}
+  rerenderAll();
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rerenderAll);
+
+document.querySelectorAll("nav.tabs a").forEach(a => a.addEventListener("click", () => {
+  document.querySelectorAll("nav.tabs a").forEach(x => x.classList.toggle("on", x === a));
+}));
+
+function boot() {
+  try { const th = localStorage.getItem("fr-theme"); if (th) document.documentElement.setAttribute("data-theme", th); } catch (e) {}
+  trendChart = echarts.init($("trend"), null, { renderer: "svg" });
+  heatChart = echarts.init($("heat"), null, { renderer: "svg" });
+  bindSeg("days", "days", renderTrend);
+  bindSeg("cal", "cal", renderCal);
+  renderPlanner();
+  renderCal();
+  addEventListener("resize", () => { trendChart.resize(); heatChart.resize(); });
+}
+if (window.echarts) boot();
+else {
+  document.querySelector("main").insertAdjacentHTML("afterbegin", '<p class="glass" style="padding:14px 18px">图表库没有加载成功，刷新页面再试一次。</p>');
+  bindSeg("cal", "cal", renderCal);
+  renderCal();
+}
+</script>
