@@ -42,9 +42,16 @@
 - [x] CLI `farerecord notify-test`；collector 抓取后自动评估规则
 
 ## M6 调度与使用文档 `feat/m6-schedule`
-- [x] Windows 任务计划注册/删除脚本（每天 4 次）
+- [x] Windows 任务计划注册/删除脚本（M8 起默认每 60 分钟检查）
 - [x] README：安装、配置、微信绑定、日常使用
 
 ## M7 云端运行（可选）`feat/m7-cloud`
 - [ ] GitHub Actions 定时抓取，数据库存 `data` 分支
 - [ ] 导出静态快照，GitHub Pages 发布只读看板
+
+## M8 Windows 桌面端 `feat/m8-desktop`
+- [x] WebView2 独立窗口、`farerecord app` 和桌面快捷方式安装脚本
+- [x] 窗口打开时自动抓取，和 Windows 任务计划同时到点时仅登记一次
+- [x] 组合到价提醒、桌面通知、界面设置与提醒测试入口
+- [x] 日历、弹性行程和提醒区分匹配航司与参考航司起价，兼容旧数据库
+- [x] 更新安装、定时抓取和数据模型说明
