@@ -5,7 +5,7 @@
 在 0.85 左右），用这个比例去估长途组合的往返价，比直接把两张单程相加更接近真实。
 
 校准来源的优先级：
-1. 最近的真实往返价：用户手动核过的，或固定行程从携程往返订票页读到的（最可信）
+1. 用户最近手动核过的真实往返价（最可信）
 2. 最近若干次抓取里，携程往返缓存 ÷ 同一次抓取的两张单程之和
 3. 都没有时比例为 1，即不校准
 
@@ -32,7 +32,7 @@ RATIO_RANGE = (0.6, 1.0)  # 两张单程永远买得到，所以往返预估不�
 @dataclass(frozen=True)
 class Calibration:
     ratio: float = 1.0
-    source: str = "none"  # manual | page | cache | none
+    source: str = "none"  # manual | cache | none
     samples: int = 0
 
     def apply(self, oneway_sum: float) -> float:
@@ -75,10 +75,11 @@ def _from_manual(
 ) -> Calibration | None:
     since = (now - MANUAL_VALID).isoformat()
     manual = repo.recent_manual_quotes(conn, origin, dest, since)
-    page = repo.recent_real_quotes(conn, origin, dest, since)  # 每个组合只取最新一条
+    # 固定行程从携程页面读到的实价不参与校准：它只代表那一个日期组合，
+    # 那两天的单程价一跳，所有组合的预估都会跟着晃（实测比例从 0.84 掉到 0.78）
     ratios = []
     cache: dict[tuple[str, str], list] = {}
-    for q in manual + page:
+    for q in manual:
         key = (q["depart_date"], q["return_date"])
         if key not in cache:
             depart, ret = date.fromisoformat(key[0]), date.fromisoformat(key[1])
@@ -92,7 +93,7 @@ def _from_manual(
         ratios.append(q["price"] / (out_price + ret_price))
     if not ratios:
         return None
-    return Calibration(_clamp(median(ratios)), "manual" if manual else "page", len(ratios))
+    return Calibration(_clamp(median(ratios)), "manual", len(ratios))
 
 
 def current(

@@ -408,8 +408,6 @@ function renderHero() {
   const pct = Math.round(cal.ratio * 100);
   $("calExplain").innerHTML = real
     ? `大数字是携程往返订票页上这两个日期的<b>最低往返含税价</b>（1 位成人、经济舱），和你自己打开携程看到的是同一个数。桌面端开着或系统定时任务运行时会定时重新读取。左边两张单程是分开买的价格，留作对照。下单前请以携程结算页为准。`
-    : cal.source === "page"
-    ? `往返预估是按携程往返订票页上读到的真实往返价校准的：这条航线的往返票约为两张单程之和的 <b>${pct}%</b>。把你要买的日期固定在首页，就能直接看到它的真实往返价。`
     : cal.source === "manual"
     ? `往返预估是按你最近核过的真实往返价校准的：这条航线的往返票约为两张单程之和的 <b>${pct}%</b>。实际价格以携程为准。`
     : cal.source === "cache"
@@ -511,17 +509,16 @@ function renderTop() {
 function renderTrend() {
   if (!trendChart) return;
   const accent = tok("--accent"), down = tok("--down");
-  let pts = [], hint, manual = [], estPts = [], mainName = "往返预估";
+  let pts = [], hint, manual = [], mainName = "往返预估";
   if (state.mode === "combo") {
     const h = state.history, real = realOf(h);
     pts = h ? h.series.map(([t, p]) => [new Date(t).getTime(), p]) : [];
     manual = h ? h.manual.map((m) => [new Date(m.observed_at).getTime(), m.price, m.note || ""]) : [];
     hint = state.sel ? "每次抓取记录一个点；菱形是你录入的真实往返价" : "还没有选中组合";
     if (real) {
-      estPts = pts;   // 预估降为对照的虚线
       pts = real.series.map(([t, p, a]) => [new Date(t).getTime(), p, a || ""]);
       mainName = "携程往返实价";
-      hint = "实线是携程往返订票页上的真实往返价；虚线是按单程推算的预估，留作对照（点图例可隐藏）";
+      hint = "每个点是一次从携程往返订票页读到的真实往返价（等页面搜索完成后读取）";
     }
   } else {
     const lh = state.flex ? state.flex.low_history : [];
@@ -530,10 +527,9 @@ function renderTrend() {
     mainName = "窗口最低";
   }
   if (state.days && pts.length) {
-    const end = Math.max(pts[pts.length - 1][0], estPts.length ? estPts[estPts.length - 1][0] : 0);
+    const end = pts[pts.length - 1][0];
     const recent = (p) => p[0] >= end - state.days * DAY;
     pts = pts.filter(recent);
-    estPts = estPts.filter(recent);
     manual = manual.filter(recent);
   }
   if (pts.length < 2) hint += " · 数据还少，多抓几次就能看到走势";
@@ -552,13 +548,9 @@ function renderTrend() {
     } : undefined,
     markLine: target ? {
       symbol: "none", silent: true, lineStyle: { type: "dashed", color: down, opacity: 0.8 },
-      label: { color: down, position: "insideEndTop", formatter: "目标 " + yuan(target) }, data: [{ yAxis: target }],
+      label: { color: down, position: "insideStartTop", formatter: "目标 " + yuan(target) }, data: [{ yAxis: target }],
     } : undefined,
   }];
-  if (estPts.length) {
-    series.push({ name: "往返预估", type: "line", data: estPts, showSymbol: false, smooth: 0.12,
-      lineStyle: { width: 1.4, type: "dashed", color: tok("--muted") }, itemStyle: { color: tok("--muted") } });
-  }
   if (manual.length) {
     series.push({ name: "手动核价", type: "scatter", data: manual, symbol: "diamond", symbolSize: 11,
       itemStyle: { color: down, borderColor: tok("--bg"), borderWidth: 1.5 } });
@@ -566,7 +558,7 @@ function renderTrend() {
   trendChart.setOption({
     animationDuration: 400,
     textStyle: baseText(),
-    grid: { left: 58, right: 14, top: 22, bottom: 28 },
+    grid: { left: 58, right: 52, top: 30, bottom: 28 },
     legend: series.length > 1 ? { right: 0, top: 0, textStyle: { color: tok("--muted") }, itemWidth: 12, itemHeight: 8 } : undefined,
     tooltip: {
       trigger: "axis", ...tooltipStyle(), axisPointer: { lineStyle: { color: tok("--faint") } },

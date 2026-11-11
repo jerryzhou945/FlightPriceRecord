@@ -29,6 +29,7 @@ from farerecord.sources.base import SourceError
 
 WINDOW_TITLE = "航价记 · 携程核价"
 OFFSCREEN = -30000  # 窗口放在屏幕外：页面要"可见"才会加载，但不该打扰用户
+SETTLE_SECONDS = 14.0  # 认不出搜索进度条时，报价出现后至少再等这么久
 PRICE_RANGE = (200, 300_000)  # 读到这个范围以外的数字，多半是读错了
 
 # 读页面上已经渲染出来的内容：每个航班行的价格和航司、日期条上当前日期的最低价。
@@ -52,6 +53,7 @@ EXTRACT_JS = r"""
     url: location.href,
     items: items,
     tabs: tabs,
+    loading: !!document.querySelector('[class*="Progress_process"]'),
     captcha: !!document.querySelector('[class*=captcha],[id*=captcha],[class*=verify-]')
   });
 })()
@@ -141,17 +143,24 @@ def wait_for_quotes(
     *,
     timeout: float = 45.0,
     poll: float = 2.0,
+    settle: float = SETTLE_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
-    """反复读页面，直到报价出现、被拦住或超时。返回最后一次读到的内容。
+    """反复读页面，直到报价出齐、被拦住或超时。返回最后一次读到的内容。
+
+    携程是边搜边显示的：先出一批价格，几秒后搜索进度条走完，价格才变成最终的
+    （实测先显示 ¥7,133，6 秒后变成 ¥7,125）。所以要等进度条结束，并且连续两次读到的
+    价格一样才算数。万一页面改版认不出进度条，就在报价出现后至少再等 settle 秒。
 
     evaluate：在页面里执行一段脚本并返回结果；marker：目标页面网址里应有的日期片段，
     用来跳过"上一个页面还没换掉"的瞬间。
     """
     deadline = clock() + timeout
     snap: dict[str, Any] = {}
-    seen = False
+    previous: Any = None
+    first_seen: float | None = None
+    saw_progress = False
     while clock() < deadline:
         sleep(poll)
         try:
@@ -159,16 +168,22 @@ def wait_for_quotes(
             current = json.loads(raw) if raw else {}
         except Exception:  # noqa: BLE001 — 页面正在跳转时执行脚本会失败，下一轮再读
             continue
-        url = str(current.get("url") or "")
         if is_blocked(current):
             return current
-        if marker not in url:
+        if marker not in str(current.get("url") or ""):
             continue
         snap = current
-        if snap.get("items"):
-            if snap.get("tabs") or seen:
-                break
-            seen = True  # 报价出来了，再等一轮让日期条上的最低价也出来
+        loading = bool(snap.get("loading"))
+        saw_progress = saw_progress or loading
+        if not snap.get("items"):
+            continue
+        now = clock()
+        first_seen = now if first_seen is None else first_seen
+        prices = (snap.get("items"), snap.get("tabs"))
+        steady = prices == previous
+        previous = prices
+        if steady and not loading and (saw_progress or now - first_seen >= settle):
+            break
     return snap
 
 

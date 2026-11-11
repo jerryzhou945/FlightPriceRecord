@@ -101,15 +101,20 @@ def test_parse_reports_blocked_and_empty() -> None:
     assert not is_blocked(snap(captcha=True))  # 页面上有报价时，验证码组件只是预加载
 
 
-def test_wait_for_quotes_polls_until_prices_show() -> None:
+def test_wait_for_quotes_waits_for_the_search_to_finish() -> None:
     import json
 
+    early = snap(items=[[7133, "土耳其航空"]], tabs=[[7133, "2026-12-28", "2027-01-20"]])
+    final = snap(items=[[7125, "土耳其航空"]], tabs=[[7125, "2026-12-28", "2027-01-20"]])
     frames = [
         "",  # 页面还没好
         json.dumps({"url": "about:blank", "items": [[1, "旧页面"]]}),  # 上一个页面还没换掉
-        json.dumps(snap(items=[], tabs=[])),
-        json.dumps(snap(tabs=[])),  # 报价出来了，日期条还没出来 → 再等一轮
-        json.dumps(snap()),
+        json.dumps(snap(items=[], tabs=[], loading=True)),
+        json.dumps({**early, "loading": True}),  # 先出一批价格，还在搜
+        json.dumps({**early, "loading": True}),  # 价格没变，但进度条还在走 → 不算数
+        json.dumps(final),  # 搜完了，价格变成最终的
+        json.dumps(final),  # 再读一次确认没再变
+        json.dumps(snap(items=[[1, "不该读到这里"]])),
     ]
     clock = iter(range(100))
     got = wait_for_quotes(
@@ -118,7 +123,25 @@ def test_wait_for_quotes_polls_until_prices_show() -> None:
         sleep=lambda s: None,
         clock=lambda: next(clock),
     )
-    assert got["tabs"] and not frames
+    assert parse_snapshot(got, D, R).price == 7125 and len(frames) == 1
+
+
+def test_wait_for_quotes_settles_by_time_without_a_progress_bar() -> None:
+    import json
+
+    # 页面改版、认不出进度条：报价出现后至少等 settle 秒，且价格不再变
+    ticks = iter(range(0, 1000, 2))
+    reads: list[int] = []
+
+    def evaluate(js: str) -> str:
+        reads.append(1)
+        price = 7133 if len(reads) < 4 else 7125
+        return json.dumps(snap(items=[[price, "土耳其航空"]], tabs=[]))
+
+    got = wait_for_quotes(
+        evaluate, "depdate=", settle=14, sleep=lambda s: None, clock=lambda: next(ticks)
+    )
+    assert got["items"][0][0] == 7125 and len(reads) >= 5
 
 
 def test_wait_for_quotes_stops_when_blocked_or_timed_out() -> None:
@@ -247,13 +270,10 @@ def test_stale_real_price_is_not_current(conn) -> None:
     assert realprice.fresh_real_price(conn, "CHI", "SHA", D, R, NOW - timedelta(hours=2)) == 7139
 
 
-def test_page_quotes_calibrate_other_trips(conn) -> None:
+def test_page_quotes_do_not_move_the_estimate_of_other_trips(conn) -> None:
     seed_run(conn, "2026-11-11T11:00:00+00:00", {D: 4300}, {R: 4239})
-    repo.add_real_quote(conn, "CHI", "SHA", D, R, 7000, None, "2026-11-11T11:30:00+00:00")
     repo.add_real_quote(conn, "CHI", "SHA", D, R, 7139, None, "2026-11-11T12:00:00+00:00")
-    cal = calibration.current(conn, "CHI", "SHA", NOW)
-    assert cal.source == "page" and cal.samples == 1  # 每个组合只用最新一条
-    assert cal.ratio == pytest.approx(7139 / 8539)
+    assert calibration.current(conn, "CHI", "SHA", NOW).source == "none"
 
 
 # ---------- 接口 ----------

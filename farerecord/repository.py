@@ -414,18 +414,6 @@ def latest_real_quote(
     return dict(row) if row else None
 
 
-def recent_real_quotes(
-    conn: sqlite3.Connection, origin: str, dest: str, since: str
-) -> list[dict[str, Any]]:
-    """since（UTC ISO）之后，每个去回组合最新的一条真实往返价。"""
-    rows = conn.execute(
-        "SELECT *, MAX(observed_at) FROM real_quote WHERE origin=? AND dest=? AND observed_at >= ? "
-        "GROUP BY depart_date, return_date",
-        (origin, dest, since),
-    )
-    return [dict(r) for r in rows]
-
-
 def prune_real_quotes(conn: sqlite3.Connection, before: str) -> int:
     with conn:
         cur = conn.execute("DELETE FROM real_quote WHERE observed_at < ?", (before,))
