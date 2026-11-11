@@ -3,100 +3,121 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
 <title>航价记</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6'/%3E%3Cpath fill='white' d='M20 15v-1.6l-6.6-4.1V5.2a1.4 1.4 0 0 0-2.8 0v4.1L4 13.4V15l6.6-2v4.5l-1.7 1.2V20l3.1-.9 3.1.9v-1.3l-1.7-1.2V13z'/%3E%3C/svg%3E">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="styles.css">
+<script>
+  // 在首屏渲染前套用保存的主题，避免闪一下
+  try { const t = localStorage.getItem("fr-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) { /* ignore */ }
+</script>
 <script src="vendor/echarts.min.js"></script>
 <script type="module" src="app.js"></script>
 </head>
 <body>
-<div class="ambient" aria-hidden="true"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div></div>
+<div class="ambient" aria-hidden="true"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div><div class="orb d"></div></div>
 
-<header class="bar">
-  <div class="bar-inner glass">
+<header class="topbar">
+  <div class="topbar-inner glass">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15.5v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V8.5l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2z"/></svg>
-      </span>
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
       航价记
     </div>
-    <label class="route" title="切换航线">
-      <span class="visually-hidden">航线</span>
-      <select id="routeSel" class="route-select" aria-label="航线"></select>
-    </label>
-    <nav class="tabs" aria-label="页面分区">
-      <a href="#overview" class="on">总览</a>
-      <a href="#flex">弹性行程</a>
-      <a href="#alerts">提醒</a>
-      <a href="#runs">抓取</a>
+    <nav class="tabs" aria-label="页面">
+      <button type="button" data-view="overview" class="on">总览</button>
+      <button type="button" data-view="flex">弹性行程</button>
+      <button type="button" data-view="alerts">提醒<span class="badge" id="alertBadge" hidden></span></button>
+      <button type="button" data-view="runs">抓取</button>
     </nav>
-    <div class="status"><span class="dot idle" id="statusDot"></span><span id="statusText">读取中…</span></div>
-    <button class="btn" id="collectBtn" type="button">立即抓取</button>
-    <button class="icon-btn" id="themeBtn" type="button" aria-label="切换深色/浅色">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
-    </button>
+    <div class="topbar-right">
+      <div class="status" title="抓取状态"><span class="dot idle" id="statusDot"></span><span id="statusText">读取中…</span></div>
+      <button class="btn accent" id="collectBtn" type="button">立即抓取</button>
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="切换深色/浅色" title="切换深色/浅色">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 
 <main>
-  <div class="empty glass" id="empty" hidden>
-    <div>
-      <h3>还没有价格数据</h3>
-      <p>点“立即抓取”记录第一份价格。之后用 Windows 任务计划每天自动抓取，走势会越来越完整。</p>
-    </div>
-    <button class="btn primary" id="emptyCollect" type="button">立即抓取</button>
-  </div>
-
-  <div class="section-head" id="overview">
-    <h2>价格总览</h2>
-    <p id="ovSub">—</p>
-  </div>
-
-  <section class="kpis" aria-label="关键指标">
-    <div class="kpi glass">
-      <div class="label">所选组合往返估价</div>
-      <div class="value num" id="kNow">—</div>
-      <div class="sub"><span id="kNowDelta" class="delta" hidden></span> <span id="kNowTrip"></span></div>
-    </div>
-    <div class="kpi glass">
-      <div class="label" id="kPctLabel">价格位置 · 近 14 天</div>
-      <div class="value num" id="kPct">—</div>
-      <div class="range" aria-hidden="true"><i id="kPctMark" style="left:50%"></i></div>
-      <div class="range-ends num"><span id="kMin">—</span><span id="kMax">—</span></div>
-    </div>
-    <div class="kpi glass">
-      <div class="label" id="kOutLabel">窗口内去程最低</div>
-      <div class="value num" id="kOut">—</div>
-      <div class="sub" id="kOutD">—</div>
-    </div>
-    <div class="kpi glass">
-      <div class="label" id="kRetLabel">对应回程最低</div>
-      <div class="value num" id="kRet">—</div>
-      <div class="sub" id="kRetD">—</div>
-    </div>
-  </section>
-
-  <section class="grid-2">
-    <div class="card glass">
-      <div class="card-head">
-        <h3>价格走势</h3>
-        <div class="seg" role="group" aria-label="走势类型">
-          <button type="button" data-mode="combo" aria-pressed="true">所选组合</button>
-          <button type="button" data-mode="low" aria-pressed="false">窗口最低</button>
-        </div>
-        <div class="seg" role="group" aria-label="时间范围">
-          <button type="button" data-days="7" aria-pressed="false">7天</button>
-          <button type="button" data-days="14" aria-pressed="true">14天</button>
-          <button type="button" data-days="30" aria-pressed="false">30天</button>
-          <button type="button" data-days="0" aria-pressed="false">全部</button>
-        </div>
+  <!-- ============ 总览 ============ -->
+  <section class="view active" id="view-overview" aria-label="总览">
+    <div class="empty glass" id="empty" hidden>
+      <div>
+        <h3>还没有价格数据</h3>
+        <p>点“立即抓取”记录第一份价格。之后航价记开着的时候每小时自动抓取一次，走势会越来越完整。</p>
       </div>
-      <p class="hint" id="trendHint">—</p>
-      <div class="chart" id="trend" role="img" aria-label="价格走势折线图"></div>
+      <button class="btn accent" id="emptyCollect" type="button">立即抓取</button>
     </div>
+
+    <div class="hero glass sheen">
+      <div class="hero-text">
+        <label class="route-pill" title="切换航线">
+          <span class="visually-hidden">航线</span>
+          <select id="routeSel" aria-label="航线"></select>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </label>
+        <h1><span id="heroRoute">—</span><br><span class="soft">往返</span> <span class="accent num" id="kNow">—</span></h1>
+        <p class="hero-sub" id="ovSub">—</p>
+        <p class="hero-air" id="heroAir"></p>
+        <div class="hero-actions">
+          <a class="btn accent" id="heroLink" href="#" target="_blank" rel="noopener">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 5 11 7-11 7z"/></svg>去携程核价
+          </a>
+          <button class="btn" id="heroWatch" type="button">设置提醒</button>
+          <button class="btn ghost" id="manualBtn" type="button">录入实价</button>
+        </div>
+        <p class="fineprint"><span id="kNowDelta" class="delta" hidden></span> 估价 = 去程单程最低价 + 回程单程最低价</p>
+      </div>
+      <div class="hero-pane glass inner">
+        <div class="card-head">
+          <div class="seg" role="group" aria-label="走势类型">
+            <button type="button" data-mode="combo" aria-pressed="true">所选组合</button>
+            <button type="button" data-mode="low" aria-pressed="false">窗口最低</button>
+          </div>
+          <div class="seg" role="group" aria-label="时间范围">
+            <button type="button" data-days="1" aria-pressed="false">24时</button>
+            <button type="button" data-days="7" aria-pressed="true">7天</button>
+            <button type="button" data-days="30" aria-pressed="false">30天</button>
+            <button type="button" data-days="0" aria-pressed="false">全部</button>
+          </div>
+        </div>
+        <div class="chart" id="trend" role="img" aria-label="价格走势折线图"></div>
+        <p class="hint" id="trendHint">—</p>
+      </div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi glass">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-5 4 3 8-9"/><path d="M15 6h5v5"/></svg>
+        <div class="label" id="kPctLabel">价格位置 · 近 14 天</div>
+        <div class="value" id="kPct">—</div>
+        <div class="range" aria-hidden="true"><i id="kPctMark" style="left:50%"></i></div>
+        <div class="range-ends num"><span id="kMin">—</span><span id="kMax">—</span></div>
+      </div>
+      <div class="kpi glass">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M4.5 14.5 9 13l8.5-6.5a2 2 0 0 1 2.9 2.6L12 16l-3 .8z"/><path d="m9 13-3.5-3"/></svg>
+        <div class="label" id="kOutLabel">窗口内去程最低</div>
+        <div class="value num" id="kOut">—</div>
+        <div class="sub" id="kOutD">—</div>
+      </div>
+      <div class="kpi glass">
+        <svg class="ico flip" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M4.5 14.5 9 13l8.5-6.5a2 2 0 0 1 2.9 2.6L12 16l-3 .8z"/><path d="m9 13-3.5-3"/></svg>
+        <div class="label" id="kRetLabel">对应回程最低</div>
+        <div class="value num" id="kRet">—</div>
+        <div class="sub" id="kRetD">—</div>
+      </div>
+      <div class="kpi glass">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+        <div class="label">自动抓取</div>
+        <div class="value" id="kNext">—</div>
+        <div class="sub" id="kNextD">—</div>
+      </div>
+    </div>
+
     <div class="card glass">
       <div class="card-head">
         <h3>低价日历</h3>
@@ -104,108 +125,179 @@
           <button type="button" data-cal="out" aria-pressed="true">去程</button>
           <button type="button" data-cal="ret" aria-pressed="false">回程</button>
         </div>
-      </div>
-      <div class="cal-nav">
-        <button class="icon-btn" id="calPrev" type="button" aria-label="上个月">‹</button>
-        <span id="calLabel" class="num">—</span>
-        <button class="icon-btn" id="calNext" type="button" aria-label="下个月">›</button>
+        <div class="cal-nav">
+          <button class="icon-btn" id="calPrev" type="button" aria-label="上个月">‹</button>
+          <span id="calLabel" class="num">—</span>
+          <button class="icon-btn" id="calNext" type="button" aria-label="下个月">›</button>
+        </div>
       </div>
       <div class="cal" id="cal"></div>
-      <div class="legend"><span class="l0">当月最便宜 20%</span><span class="l4">当月最贵 20%</span><span>单程 · 含税 · 点日期去携程</span></div>
+      <div class="legend"><span class="l0">当月最便宜 20%</span><span class="l4">当月最贵 20%</span><span class="plain">“参考”表示该航司的报价高于日历价。点日期可到携程核价。</span></div>
     </div>
   </section>
 
-  <div class="section-head" id="flex">
-    <h2>弹性行程</h2>
-    <p>在出发窗口和游玩天数范围内，找最便宜的去回组合</p>
-  </div>
+  <!-- ============ 弹性行程 ============ -->
+  <section class="view" id="view-flex" aria-label="弹性行程">
+    <div class="section-head">
+      <h2>弹性行程</h2>
+      <p>在出发窗口和游玩天数范围内，找最便宜的去回组合</p>
+    </div>
+    <div class="planner">
+      <form class="controls glass" id="flexForm" onsubmit="return false">
+        <div class="field">
+          <label for="fStart">出发窗口</label>
+          <div class="row">
+            <input id="fStart" type="date" required>
+            <span class="tilde">~</span>
+            <input id="fEnd" type="date" required>
+          </div>
+        </div>
+        <div class="field">
+          <label for="fMin">游玩天数</label>
+          <div class="row">
+            <input id="fMin" type="number" min="1" max="120" required>
+            <span class="tilde">~</span>
+            <input id="fMax" type="number" min="1" max="120" required>
+            <span class="tilde">天</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="fIdeal">理想天数</label>
+          <div class="row"><input id="fIdeal" type="number" min="1" max="120"><span class="tilde">天</span></div>
+        </div>
+        <p class="form-error" id="flexError" hidden></p>
+        <div class="best" id="bestCard">
+          <div class="k">窗口内最低组合</div>
+          <div class="v num" id="bestV">—</div>
+          <div class="trip" id="bestTrip">—</div>
+          <div class="air" id="bestAir"></div>
+          <div class="actions">
+            <a id="bestLink" href="#" target="_blank" rel="noopener">去携程核价 ↗</a>
+            <button type="button" id="bestWatch">设置提醒</button>
+          </div>
+        </div>
+        <ul class="tips" id="tips"></ul>
+      </form>
+      <div class="card glass">
+        <div class="card-head">
+          <h3>出发日 × 游玩天数</h3>
+          <span class="hint" id="heatHint">点格子查看该组合走势</span>
+        </div>
+        <div class="heat-wrap"><div class="heat" id="heat" role="img" aria-label="出发日期与游玩天数的价格热力图"></div></div>
+        <div class="table-wrap">
+          <table class="toplist" aria-label="最便宜的组合">
+            <thead><tr><th>出发</th><th>返回</th><th>天数</th><th class="price">去程</th><th class="price">回程</th><th class="price">估价</th><th class="price">往返实价</th><th></th></tr></thead>
+            <tbody id="top"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
 
-  <section class="planner">
-    <form class="controls glass" id="flexForm" onsubmit="return false">
-      <div class="field">
-        <label for="fStart">出发窗口</label>
-        <div class="row">
-          <input id="fStart" type="date" required>
-          <span class="tilde">~</span>
-          <input id="fEnd" type="date" required>
+  <!-- ============ 提醒 ============ -->
+  <section class="view" id="view-alerts" aria-label="提醒">
+    <div class="section-head">
+      <h2>提醒</h2>
+      <p id="alertsSub">价格到位时通知你</p>
+    </div>
+    <div class="grid-2">
+      <div class="card glass">
+        <div class="card-head">
+          <h3>到价提醒</h3>
+          <span class="hint">某个去回组合的估价降到你设的价格就通知</span>
+          <button class="btn sm push" id="addWatch" type="button">＋ 为当前组合设提醒</button>
+        </div>
+        <div class="watches" id="watches"><p class="hint">读取中…</p></div>
+      </div>
+      <div class="card glass">
+        <div class="card-head">
+          <h3>通知方式</h3>
+          <button class="btn sm push" id="testAlert" type="button">发一条测试</button>
+        </div>
+        <div class="rules">
+          <label class="rule">
+            <div><div class="t">桌面通知</div><div class="s" id="desktopHint">Windows 右下角弹窗，点击打开携程核价页</div></div>
+            <span class="switch"><input type="checkbox" id="sDesktop"><span></span></span>
+          </label>
+          <div class="rule">
+            <div><div class="t">微信推送</div><div class="s" id="wechatHint">—</div></div>
+            <span class="pill" id="wechatPill">—</span>
+          </div>
         </div>
       </div>
-      <div class="field">
-        <label for="fMin">游玩天数</label>
-        <div class="row">
-          <input id="fMin" type="number" min="1" max="120" required>
-          <span class="tilde">~</span>
-          <input id="fMax" type="number" min="1" max="120" required>
-          <span class="tilde">天</span>
+    </div>
+    <div class="grid-2">
+      <div class="card glass">
+        <div class="card-head"><h3>窗口最低价规则</h3><span class="hint" id="rulesHint">针对弹性窗口里最便宜的组合</span></div>
+        <div class="rules">
+          <div class="rule">
+            <div><div class="t">低于目标价</div><div class="s">窗口内最低往返估价跌破这个价就提醒；留空关闭</div></div>
+            <span class="inline-input"><span>¥</span><input type="number" id="sTarget" min="1" step="50" placeholder="不设" aria-label="目标价"></span>
+          </div>
+          <label class="rule">
+            <div><div class="t">出现历史新低</div><div class="s">比此前每次抓取的窗口最低价都低</div></div>
+            <span class="switch"><input type="checkbox" id="sNewLow"><span></span></span>
+          </label>
+          <div class="rule">
+            <div><div class="t">24 小时大幅降价</div><div class="s">和约 24 小时前相比的跌幅；填 0 关闭</div></div>
+            <span class="inline-input"><input type="number" id="sDrop" min="0" max="90" step="1" aria-label="跌幅百分比"><span>%</span></span>
+          </div>
+          <div class="rule">
+            <div><div class="t">抓取连续失败</div><div class="s">携程接口变化或网络问题时提醒；填 0 关闭</div></div>
+            <span class="inline-input"><input type="number" id="sFail" min="0" max="50" step="1" aria-label="连续失败次数"><span>次</span></span>
+          </div>
+          <div class="rule">
+            <div><div class="t">夜间免打扰</div><div class="s">这段时间不通知，之后的抓取再补发</div></div>
+            <span class="inline-input wide"><input type="time" id="sQuietStart" aria-label="免打扰开始"><span>–</span><input type="time" id="sQuietEnd" aria-label="免打扰结束"></span>
+            <span class="switch"><input type="checkbox" id="sQuietOn" aria-label="启用免打扰"><span></span></span>
+          </div>
         </div>
       </div>
-      <div class="field">
-        <label for="fIdeal">理想天数</label>
-        <div class="row"><input id="fIdeal" type="number" min="1" max="120"><span class="tilde">天</span></div>
-      </div>
-      <p class="form-error" id="flexError" hidden></p>
-      <div class="best" id="bestCard">
-        <div class="k">窗口内最低组合</div>
-        <div class="v num" id="bestV">—</div>
-        <div class="trip" id="bestTrip">—</div>
-        <div class="actions">
-          <a id="bestLink" href="#" target="_blank" rel="noopener">去携程核价 ↗</a>
-          <button type="button" id="manualBtn">录入实价</button>
+      <div class="card glass">
+        <div class="card-head"><h3>最近提醒</h3><span class="hint" id="channelHint"></span></div>
+        <div class="table-wrap">
+          <table class="toplist plain" aria-label="最近提醒">
+            <thead><tr><th>时间</th><th>规则</th><th>内容</th><th>状态</th></tr></thead>
+            <tbody id="alertLog"></tbody>
+          </table>
         </div>
       </div>
-      <ul class="tips" id="tips"></ul>
-    </form>
+    </div>
+  </section>
+
+  <!-- ============ 抓取 ============ -->
+  <section class="view" id="view-runs" aria-label="抓取">
+    <div class="section-head">
+      <h2>抓取记录</h2>
+      <p id="runsSub">—</p>
+    </div>
+    <div class="kpis three">
+      <div class="kpi glass">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+        <div class="label">抓取间隔</div><div class="value" id="rInterval">—</div><div class="sub" id="rIntervalD">—</div>
+      </div>
+      <div class="kpi glass">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-14 5.3L4 15"/><path d="M4 20v-5h5"/></svg>
+        <div class="label">下次抓取</div><div class="value" id="rNext">—</div><div class="sub" id="rNextD">—</div>
+      </div>
+      <div class="kpi glass">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>
+        <div class="label">累计记录</div><div class="value num" id="rTotal">—</div><div class="sub" id="rTotalD">—</div>
+      </div>
+    </div>
     <div class="card glass">
-      <div class="card-head">
-        <h3>出发日 × 游玩天数</h3>
-        <span class="hint" id="heatHint">点格子查看该组合走势</span>
-      </div>
-      <div class="heat-wrap"><div class="heat" id="heat" role="img" aria-label="出发日期与游玩天数的价格热力图"></div></div>
       <div class="table-wrap">
-        <table class="toplist" aria-label="最便宜的组合">
-          <thead><tr><th>出发</th><th>返回</th><th>天数</th><th class="price">去程</th><th class="price">回程</th><th class="price">估价</th><th class="price">往返实价</th></tr></thead>
-          <tbody id="top"></tbody>
+        <table class="toplist plain" aria-label="抓取记录">
+          <thead><tr><th>时间</th><th>状态</th><th class="price">报价数</th><th>说明</th></tr></thead>
+          <tbody id="runsBody"></tbody>
         </table>
       </div>
-    </div>
-  </section>
-
-  <div class="section-head" id="alerts">
-    <h2>提醒</h2>
-    <p id="alertsSub">满足任意一条就推送到微信</p>
-  </div>
-  <section class="grid-2" id="alertsSection">
-    <div class="card glass">
-      <div class="card-head"><h3>提醒规则</h3><span class="hint">在 config.yaml 中修改</span></div>
-      <div class="rules" id="rules"><p class="hint">读取中…</p></div>
-    </div>
-    <div class="card glass">
-      <div class="card-head"><h3>最近推送</h3><span class="hint" id="channelHint"></span></div>
-      <div class="table-wrap">
-        <table class="toplist" aria-label="最近推送">
-          <thead><tr><th>时间</th><th>规则</th><th>内容</th><th>状态</th></tr></thead>
-          <tbody id="alertLog"></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <div class="section-head" id="runs">
-    <h2>抓取记录</h2>
-    <p id="runsSub">—</p>
-  </div>
-  <section class="card glass">
-    <div class="table-wrap">
-      <table class="toplist" aria-label="抓取记录">
-        <thead><tr><th>时间</th><th>状态</th><th class="price">报价数</th><th>说明</th></tr></thead>
-        <tbody id="runsBody"></tbody>
-      </table>
     </div>
   </section>
 </main>
 
 <footer>
-  价格来自携程低价日历（经济舱、1 位成人、含税、人民币）。往返估价 = 去程单程最低价 + 回程单程最低价，实际往返票可能更便宜或更贵，下单前请点“去携程核价”确认。仅供个人参考。
+  价格来自携程低价日历（经济舱、1 位成人、含税、人民币）。往返估价 = 去程单程最低价 + 回程单程最低价，实际往返票可能更便宜或更贵；航司是对比各航司日历价得出的，可能是联程或代码共享。下单前请点“去携程核价”确认。仅供个人参考。
 </footer>
 
 <dialog id="manualDlg" class="dlg">
@@ -218,8 +310,23 @@
     <div class="field"><label for="mNote">备注</label><input id="mNote" type="text" maxlength="200" placeholder="如：携程往返 东航 1 次中转"></div>
     <p class="form-error" id="manualError" hidden></p>
     <div class="dlg-actions">
-      <button class="btn" value="cancel" type="button" id="manualCancel">取消</button>
-      <button class="btn primary" type="submit" id="manualSave">保存</button>
+      <button class="btn" type="button" id="manualCancel">取消</button>
+      <button class="btn accent" type="submit" id="manualSave">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="watchDlg" class="dlg">
+  <form method="dialog" id="watchForm">
+    <h3>设置到价提醒</h3>
+    <p class="hint" id="watchNow">这个组合的往返估价降到目标价或更低时通知你。</p>
+    <div class="field"><label for="wDepart">出发</label><input id="wDepart" type="date" required></div>
+    <div class="field"><label for="wReturn">返回</label><input id="wReturn" type="date" required></div>
+    <div class="field"><label for="wPrice">目标价（人民币，含税往返）</label><input id="wPrice" type="number" min="1" step="1" required></div>
+    <p class="form-error" id="watchError" hidden></p>
+    <div class="dlg-actions">
+      <button class="btn" type="button" id="watchCancel">取消</button>
+      <button class="btn accent" type="submit">保存提醒</button>
     </div>
   </form>
 </dialog>
