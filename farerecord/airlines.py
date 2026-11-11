@@ -2,12 +2,18 @@
 
 做法：拿到某方向"全部航司"的每日最低价后，再按航司逐个查同一份日历；
 哪家航司的每日最低价和总体最低价对得上，这一天的最低价就记在它名下。
-两份日历各有缓存，价格可能差几块钱，所以允许一个很小的误差。
+两份日历各有缓存，价格可能差几块钱，所以允许一个很小的误差（OnewayQuote.airline_exact）。
+
+实测有不少日期的最低价对不上任何单一航司（多家航司联程，或携程自己的特价组合），
+这时记下已查航司里最便宜的一家和它的价格，界面上显示为"最接近的航司"。
 """
 
 from __future__ import annotations
 
-from datetime import date
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from farerecord.models import OnewayQuote
 
 # 默认候选航司，按"在中美/亚洲长航线上经常出最低价"的经验排序；可在 config.yaml 里改。
 DEFAULT_AIRLINES = [
@@ -79,8 +85,6 @@ NAMES = {
     "ZH": "深圳航空",
 }
 
-PRICE_TOLERANCE = 0.01  # 航司日历价 ≤ 总体最低价 × (1 + 1%) 视为同一个报价
-
 
 def airline_name(code: str | None) -> str | None:
     """航司二字码 → 中文名；不认识的代码原样返回。"""
@@ -89,8 +93,27 @@ def airline_name(code: str | None) -> str | None:
     return NAMES.get(code.upper(), code.upper())
 
 
-def airline_json(code: str | None) -> dict[str, str] | None:
-    return {"code": code, "name": airline_name(code) or code} if code else None
+def airline_json(quote: OnewayQuote | None) -> dict[str, Any] | None:
+    """接口里的航司信息。exact=False 表示最低价对不上单一航司，这是最接近的一家和它的起价。"""
+    if quote is None or not quote.airline:
+        return None
+    exact = quote.airline_exact
+    return {
+        "code": quote.airline,
+        "name": airline_name(quote.airline),
+        "exact": exact,
+        "price": None if exact else quote.airline_price,
+    }
+
+
+def airline_text(quote: OnewayQuote | None) -> str:
+    """提醒消息里的航司说明；没有信息返回空字符串。"""
+    if quote is None or not quote.airline:
+        return ""
+    name = f"{airline_name(quote.airline)} {quote.airline}"
+    if quote.airline_exact:
+        return name
+    return f"参考航司 {name} ¥{quote.airline_price:,.0f} 起"
 
 
 def normalize_codes(codes: object) -> list[str]:
@@ -105,14 +128,3 @@ def normalize_codes(codes: object) -> list[str]:
         if len(c) == 2 and c.isalnum() and c not in out:
             out.append(c)
     return out
-
-
-def matching_dates(
-    lowest: dict[date, float], by_airline: dict[date, float], tolerance: float = PRICE_TOLERANCE
-) -> set[date]:
-    """这家航司的每日最低价里，哪些天就是（或低于）总体最低价。"""
-    return {
-        d
-        for d, p in by_airline.items()
-        if d in lowest and p > 0 and p <= lowest[d] * (1 + tolerance)
-    }

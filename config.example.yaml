@@ -33,6 +33,6 @@ collector:
   interval_minutes: 60        # 定时抓取间隔（分钟），最短 30
   request_interval_seconds: 3 # 每个请求之间的间隔（秒），不要低于 2
   timeout_seconds: 25
-  # 航司识别：每天的最低价是哪家航司的（携程二字码，靠前的先查）。写 [] 关闭
+  # 航司识别：匹配每天的最低价，或提供已查航司中最低的参考报价。写 [] 关闭
   airlines: [CX, KE, PR, TK, NH, DL, UA, AA, AC, BR, JL, MU, CA, HU, OZ, CZ, EK, QR]
   airline_lookups: 8          # 每次抓取、每个方向最多额外查几家；价格没变的日期不会重复查

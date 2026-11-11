@@ -12,7 +12,6 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TypeVar
 
 from farerecord import repository as repo
-from farerecord.airlines import matching_dates
 from farerecord.config import AppConfig, RouteConfig
 from farerecord.models import OnewayQuote
 from farerecord.sources.base import PriceSource, RetryableSourceError, SourceError
@@ -52,7 +51,7 @@ def airline_need_range(route: RouteConfig, today: date, reverse: bool) -> tuple[
 
 def attribute_airlines(
     quotes: list[OnewayQuote],
-    previous: dict[date, tuple[float, str | None]],
+    previous: dict[date, OnewayQuote],
     need_range: tuple[date, date],
     candidates: list[str],
     max_lookups: int,
@@ -60,38 +59,55 @@ def attribute_airlines(
 ) -> list[OnewayQuote]:
     """给每天的最低价标上航司。
 
-    - 价格和上一次抓取一样的日期，沿用上次识别的航司，不发请求
-    - 其余在 need_range 内的日期，按"上次出最低价最多的航司优先"逐家查询
-      （lookup 返回该航司每天的最低价；失败返回 None 并停止），全部对上或查满
-      max_lookups 家就停
-    - 查完仍对不上的日期记为 ""（已查过、候选航司里没有），价格不变就不再重复查；
+    - 价格和上一次抓取一样的日期，沿用上次的航司信息，不发请求
+    - 其余在 need_range 内的日期，按"上次出现最多的航司优先"逐家查询
+      （lookup 返回该航司每天的最低价；失败返回 None 并停止）。每天记下已查航司里
+      最便宜的一家和它的价格；need_range 内的日期都对上了最低价，或查满 max_lookups 家就停
+    - 查完仍然没有任何航司有报价的日期记为 ""，价格不变就不再重复查；
       查询中途失败的日期保持 None，下次抓取再试
     """
-    lowest = {q.depart_date: q.price for q in quotes}
-    found: dict[date, str] = {}
-    for d, p in lowest.items():
+    lowest = {q.depart_date: q for q in quotes}
+    best: dict[date, OnewayQuote] = {}
+    for d, q in lowest.items():
         prev = previous.get(d)
-        if prev and prev[1] is not None and prev[0] == p:
-            found[d] = prev[1]
+        if prev and prev.airline is not None and prev.price == q.price:
+            best[d] = prev
+
     lo, hi = need_range
-    need = {d for d in lowest if lo <= d <= hi and d not in found}
-    wins = Counter(a for _, a in previous.values() if a)
+    need = {d for d in lowest if lo <= d <= hi and d not in best}
+    wins = Counter(q.airline for q in previous.values() if q.airline)
     for code in sorted(candidates, key=lambda c: -wins[c])[:max_lookups]:
         if not need:
             break
         prices = lookup(code)
         if prices is None:
+            # 未查完的参考价不能作为最终结果沿用，否则价格不变时将永远跳过重试。
+            for d in need:
+                best.pop(d, None)
             break
-        for d in matching_dates(lowest, prices):
-            if not found.get(d):
-                found[d] = code
-        need = {d for d in need if not found.get(d)}
+        for d, p in prices.items():
+            if d not in lowest or p <= 0:
+                continue
+            current = best.get(d)
+            if current and current.airline_exact:
+                continue
+            if not current or current.airline_price is None or p < current.airline_price:
+                candidate = replace(lowest[d], airline=code, airline_price=p)
+                if lo <= d <= hi or candidate.airline_exact:
+                    best[d] = candidate
+        need = {d for d in need if d not in best or not best[d].airline_exact}
     else:
-        found.update(dict.fromkeys(need, ""))
-    return [replace(q, airline=found.get(q.depart_date)) for q in quotes]
+        for d in need:
+            if d not in best:
+                best[d] = replace(lowest[d], airline="")
+    return [best.get(q.depart_date, q) for q in quotes]
 
 
 DUE_SLACK = timedelta(minutes=5)  # 定时器有抖动，提前这么久也算到点
+
+
+class CollectionNotDue(Exception):
+    """另一个抓取已经记录，本次定时触发应跳过。"""
 
 
 def next_due_at(conn: sqlite3.Connection, interval_minutes: int) -> datetime | None:

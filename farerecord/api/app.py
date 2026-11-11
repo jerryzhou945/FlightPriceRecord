@@ -25,7 +25,7 @@ from farerecord.analysis.history import flex_low_history
 from farerecord.analysis.stats import PriceStats, compute
 from farerecord.collector import collect_and_alert, next_due_at
 from farerecord.config import ROOT, AppConfig, load_config, parse_quiet_hours
-from farerecord.models import PriceWatch, Trip
+from farerecord.models import OnewayQuote, PriceWatch, Trip
 from farerecord.settings import effective_config
 from farerecord.sources.base import PriceSource
 
@@ -45,7 +45,7 @@ def ctrip_url(origin: str, dest: str, depart: date, ret: date | None = None) -> 
     )
 
 
-Airlines = tuple[dict[date, str], dict[date, str]]  # (去程, 回程) 日期 → 航司二字码
+Airlines = tuple[dict[date, OnewayQuote], dict[date, OnewayQuote]]  # (去程, 回程) 带航司的报价
 
 
 def trip_json(t: Trip, origin: str, dest: str, airlines: Airlines | None = None) -> dict[str, Any]:
@@ -182,20 +182,20 @@ def create_app(
     ) -> dict[str, Any]:
         o, d = norm(origin, dest)
         detail = {
-            k: v
-            for k, v in repo.latest_oneway_detail(conn, o, d).items()
+            k: q
+            for k, q in repo.latest_oneway_detail(conn, o, d).items()
             if k.isoformat()[:7] == month
         }
-        tier = _tiers([p for p, _ in detail.values()])
+        tier = _tiers([q.price for q in detail.values()])
         days = [
             {
                 "date": k.isoformat(),
-                "price": p,
-                "tier": tier(p),
-                "airline": airline_json(a),
+                "price": q.price,
+                "tier": tier(q.price),
+                "airline": airline_json(q),
                 "ctrip_url": ctrip_url(o, d, k),
             }
-            for k, (p, a) in sorted(detail.items())
+            for k, q in sorted(detail.items())
         ]
         low = min(days, key=lambda x: x["price"]) if days else None
         return {

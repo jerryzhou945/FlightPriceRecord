@@ -71,14 +71,23 @@ def save_oneway(
     conn: sqlite3.Connection, run_id: int, quotes: Iterable[OnewayQuote], observed_at: str
 ) -> int:
     rows = [
-        (run_id, q.origin, q.dest, q.depart_date.isoformat(), q.price, observed_at, q.airline)
+        (
+            run_id,
+            q.origin,
+            q.dest,
+            q.depart_date.isoformat(),
+            q.price,
+            observed_at,
+            q.airline,
+            q.airline_price,
+        )
         for q in quotes
     ]
     with conn:
         conn.executemany(
             "INSERT OR REPLACE INTO oneway_quote "
-            "(run_id, origin, dest, depart_date, price, observed_at, airline) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(run_id, origin, dest, depart_date, price, observed_at, airline, airline_price) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
     return len(rows)
@@ -125,22 +134,26 @@ def latest_oneway(conn: sqlite3.Connection, origin: str, dest: str) -> dict[date
 
 def latest_oneway_detail(
     conn: sqlite3.Connection, origin: str, dest: str
-) -> dict[date, tuple[float, str | None]]:
-    """最近一次抓取里每天的 (单程最低价, 航司二字码或 None)。"""
+) -> dict[date, OnewayQuote]:
+    """最近一次抓取里每天的单程最低价（带航司信息）。"""
     run_id = _latest_run_for(conn, "oneway_quote", origin, dest)
     if run_id is None:
         return {}
     rows = conn.execute(
-        "SELECT depart_date, price, airline FROM oneway_quote "
+        "SELECT depart_date, price, airline, airline_price FROM oneway_quote "
         "WHERE run_id=? AND origin=? AND dest=?",
         (run_id, origin, dest),
     )
-    return {date.fromisoformat(r["depart_date"]): (r["price"], r["airline"]) for r in rows}
+    return {
+        d: OnewayQuote(origin, dest, d, r["price"], r["airline"], r["airline_price"])
+        for r in rows
+        for d in (date.fromisoformat(r["depart_date"]),)
+    }
 
 
-def latest_airlines(conn: sqlite3.Connection, origin: str, dest: str) -> dict[date, str]:
-    """最近一次抓取里，已识别出航司的日期 → 航司二字码。"""
-    return {d: a for d, (_, a) in latest_oneway_detail(conn, origin, dest).items() if a}
+def latest_airlines(conn: sqlite3.Connection, origin: str, dest: str) -> dict[date, OnewayQuote]:
+    """最近一次抓取里，有航司信息的日期 → 报价。"""
+    return {d: q for d, q in latest_oneway_detail(conn, origin, dest).items() if q.airline}
 
 
 def latest_observed_at(conn: sqlite3.Connection, origin: str, dest: str) -> str | None:

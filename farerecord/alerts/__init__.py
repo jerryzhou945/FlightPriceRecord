@@ -20,7 +20,7 @@ from farerecord.alerts.rules import (
     in_quiet_hours,
 )
 from farerecord.config import AppConfig, RouteConfig
-from farerecord.models import Trip
+from farerecord.models import OnewayQuote, Trip
 from farerecord.settings import effective_config
 
 log = logging.getLogger(__name__)
@@ -30,8 +30,8 @@ __all__ = ["RULE_LABELS", "pending_messages", "run_after_collect", "send_message
 
 def trip_airlines(
     conn: sqlite3.Connection, route: RouteConfig, trip: Trip
-) -> tuple[str | None, str | None]:
-    """组合的 (去程航司, 回程航司)，取最近一次抓取识别的结果。"""
+) -> tuple[OnewayQuote | None, OnewayQuote | None]:
+    """组合的 (去程, 回程) 航司信息，取最近一次抓取识别的结果。"""
     o, d = route.origin, route.dest
     return (
         repo.latest_airlines(conn, o, d).get(trip.depart_date),

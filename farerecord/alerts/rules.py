@@ -11,11 +11,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 from farerecord import repository as repo
-from farerecord.airlines import airline_name
+from farerecord.airlines import airline_text
 from farerecord.analysis.flex import FlexQuery
 from farerecord.analysis.history import flex_low_history
 from farerecord.config import AppConfig, RouteConfig
-from farerecord.models import PriceWatch, Trip
+from farerecord.models import OnewayQuote, PriceWatch, Trip
 
 RULE_LABELS = {
     "watch": "到达提醒价",
@@ -125,8 +125,9 @@ def evaluate_watch(
     return Alert("watch", f"{watch.id}:{trip.best_price:.0f}", trip.best_price), trip
 
 
-def _airline_suffix(code: str | None) -> str:
-    return f" · {airline_name(code)} {code}" if code else ""
+def _airline_suffix(quote: OnewayQuote | None) -> str:
+    text = airline_text(quote)
+    return f" · {text}" if text else ""
 
 
 def build_price_message(
@@ -134,9 +135,9 @@ def build_price_message(
     trip: Trip,
     alerts: list[Alert],
     info: dict,
-    airlines: tuple[str | None, str | None] = (None, None),
+    airlines: tuple[OnewayQuote | None, OnewayQuote | None] = (None, None),
 ) -> Message:
-    """airlines：(去程航司, 回程航司) 二字码，识别不出为 None。"""
+    """airlines：(去程, 回程) 带航司信息的报价，没有为 None。"""
     from farerecord.api.app import ctrip_url
 
     rules = sorted({a.rule for a in alerts}, key=_PRIORITY.index)

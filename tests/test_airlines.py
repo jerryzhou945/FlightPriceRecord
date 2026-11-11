@@ -30,7 +30,7 @@ def _attr(quotes, previous, by_code, max_lookups=8, candidates=("CX", "KE", "UA"
 
     out = attribute_airlines(
         [OnewayQuote("CHI", "SHA", d, p) for d, p in quotes.items()],
-        previous,
+        {d: OnewayQuote("CHI", "SHA", d, *fields) for d, fields in previous.items()},
         (TODAY, TODAY + timedelta(days=30)),
         list(candidates),
         max_lookups,
@@ -46,8 +46,8 @@ def test_attribute_matches_lowest_price_with_tolerance() -> None:
         {},
         {"CX": {d1: 4000, d2: 5600}, "KE": {d2: 5030, d3: 6500}},
     )
-    # d2：KE 比最低价贵不到 1%，算同一个报价；d3 三家都对不上，记为已查过
-    assert got == {d1: "CX", d2: "KE", d3: ""}
+    # d2 在容差内；d3 只识别到高于最低价的参考航司。
+    assert got == {d1: "CX", d2: "KE", d3: "KE"}
     assert asked == ["CX", "KE", "UA"]
 
 
@@ -71,6 +71,8 @@ def test_attribute_respects_lookup_cap_and_failure() -> None:
     assert asked == ["CX", "KE"] and got == {D0: ""}
     got, asked = _attr({D0: 4000}, {}, {"CX": None, "KE": {D0: 4000}})
     assert asked == ["CX"] and got == {D0: None}  # 查询失败：停止，留到下次再试
+    got, asked = _attr({D0: 4000}, {}, {"CX": {D0: 4500}, "KE": None})
+    assert asked == ["CX", "KE"] and got == {D0: None}
 
 
 def test_attribute_only_requires_dates_in_range() -> None:
@@ -100,12 +102,13 @@ def test_collect_records_airlines_and_reuses_them(conn) -> None:
     src = AirlineSource()
     res, _ = run(conn, src, _cfg(["CX", "KE"]))
     assert res.status == "ok"
-    assert repo.latest_oneway_detail(conn, "CHI", "SHA") == {
+    details = repo.latest_oneway_detail(conn, "CHI", "SHA")
+    assert {d: (q.price, q.airline) for d, q in details.items()} == {
         TODAY: (4001, "KE"),
         TODAY + timedelta(days=1): (4002, "KE"),
         TODAY + timedelta(days=2): (4003, ""),
     }
-    assert repo.latest_airlines(conn, "SHA", "CHI") == {
+    assert {d: q.airline for d, q in repo.latest_airlines(conn, "SHA", "CHI").items()} == {
         TODAY: "KE",
         TODAY + timedelta(days=1): "KE",
     }
@@ -114,7 +117,8 @@ def test_collect_records_airlines_and_reuses_them(conn) -> None:
     src.calls.clear()
     run(conn, src, _cfg(["CX", "KE"]))
     assert [c[2] for c in src.calls] == ["ow", "ow", "rt"]
-    assert repo.latest_airlines(conn, "CHI", "SHA")[TODAY] == "KE"
+    cached = repo.latest_airlines(conn, "CHI", "SHA")[TODAY]
+    assert (cached.airline, cached.airline_price) == ("KE", 4001)
 
 
 def test_collect_airline_lookup_failure_is_partial(conn) -> None:
@@ -173,6 +177,29 @@ def test_migrate_v1_database_keeps_quotes() -> None:
 def test_price_message_names_airlines() -> None:
     route = parse_config({"routes": [{"origin": "CHI", "dest": "SHA"}]}).routes[0]
     trip = Trip(date(2026, 12, 30), date(2027, 1, 29), 3846, 3725)
-    msg = build_price_message(route, trip, [Alert("new_low", "k", 7571)], {}, ("CX", None))
+    outbound = OnewayQuote("CHI", "SHA", trip.depart_date, 3846, "CX")
+    msg = build_price_message(route, trip, [Alert("new_low", "k", 7571)], {}, (outbound, None))
     assert "¥3,846 · 国泰航空 CX" in msg.content
     assert "¥3,725\n" in msg.content  # 回程没识别出航司就不写
+
+
+def test_migrate_v3_retries_unknown_airline_and_keeps_known_match() -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    for version in (1, 2, 3):
+        conn.executescript(db._MIGRATIONS[version])
+    conn.execute("PRAGMA user_version = 3")
+    run_id = repo.start_run(conn, "legacy")
+    conn.executemany(
+        "INSERT INTO oneway_quote VALUES (?, 'CHI', 'SHA', ?, 4000, 't', ?)",
+        [(run_id, "2026-12-01", ""), (run_id, "2026-12-02", "KE")],
+    )
+    db.migrate(conn)
+    detail = repo.latest_oneway_detail(conn, "CHI", "SHA")
+    missing, known = detail[date(2026, 12, 1)], detail[date(2026, 12, 2)]
+    assert missing.price == known.price == 4000
+    assert missing.airline is None
+    assert known.airline == "KE" and known.airline_exact
+    conn.close()

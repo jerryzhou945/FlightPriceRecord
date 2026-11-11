@@ -162,16 +162,22 @@ def test_airlines_in_calendar_flex_and_history(setup) -> None:
     t = "2026-11-11T00:00:00+00:00"
     run_id = repo.start_run(conn, "test", t)
     repo.save_oneway(conn, run_id, [OnewayQuote("CHI", "SHA", D, 3800, "CX")], t)
-    repo.save_oneway(conn, run_id, [OnewayQuote("SHA", "CHI", R, 3700, "KE")], t)
+    repo.save_oneway(conn, run_id, [OnewayQuote("SHA", "CHI", R, 3700, "KE", 4100)], t)
     repo.save_oneway(conn, run_id, [OnewayQuote("SHA", "CHI", date(2027, 1, 28), 3900, "")], t)
     repo.finish_run(conn, run_id, "ok", 3, finished_at=t)
     conn.close()
 
     cal = client.get("/api/calendar", params={"origin": "CHI", "dest": "SHA", "month": "2026-12"})
-    assert cal.json()["days"][0]["airline"] == {"code": "CX", "name": "国泰航空"}
+    assert cal.json()["days"][0]["airline"] == {
+        "code": "CX",
+        "name": "国泰航空",
+        "exact": True,
+        "price": None,
+    }
     params = {"origin": "CHI", "dest": "SHA", "start": "2026-12-01", "end": "2026-12-31"}
     best = client.get("/api/flex", params={**params, "min": 25, "max": 35}).json()["best"]
     assert best["out_airline"]["code"] == "CX" and best["ret_airline"]["name"] == "大韩航空"
+    assert best["ret_airline"]["exact"] is False and best["ret_airline"]["price"] == 4100
     flex = client.get("/api/flex", params={**params, "min": 29, "max": 29}).json()
     assert flex["best"]["ret_airline"] is None  # 查过但没对上的日期不显示航司
     h = client.get(
