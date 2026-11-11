@@ -361,9 +361,8 @@ function renderHero() {
   const rinfo = h && h.real, check = rinfo && rinfo.check;
   if (real) {
     const at = real.series[real.series.length - 1][0];
-    const who = real.airline ? `${airBadge(real.airline)}${esc(real.airline.name)} · ` : "";
+    const who = real.airline ? `${airBadge(real.airline)} ` : "";
     notes.push(`<span class="live${real.fresh ? "" : " stale"}"></span>${who}${relTime(at)}读自携程往返订票页`);
-    if (est != null && calibrated) notes.push(`推算的预估 ${yuan(est)}`);
     if (legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
   } else if (calibrated && legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
   if (rinfo && rinfo.pinned) {
