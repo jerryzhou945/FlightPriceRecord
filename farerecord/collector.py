@@ -246,7 +246,9 @@ def prune_old_runs(
     if retention_days <= 0:
         return 0
     cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
-    removed = repo.prune_runs(conn, cutoff.replace(microsecond=0).isoformat())
+    before = cutoff.replace(microsecond=0).isoformat()
+    removed = repo.prune_runs(conn, before)
+    repo.prune_real_quotes(conn, before)
     if removed:
         log.info("已清理 %d 次 %d 天以前的抓取", removed, retention_days)
     return removed

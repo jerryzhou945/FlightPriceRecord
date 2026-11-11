@@ -49,7 +49,7 @@ def import_webview():
 
 
 def start_server(cfg: AppConfig, port: int, timeout: float = 15.0):
-    """在后台线程启动本机服务和定时抓取，等服务就绪后返回 (server, scheduler)。"""
+    """在后台线程启动本机服务和定时抓取，等服务就绪后返回 (server, scheduler, app)。"""
     import uvicorn
 
     from farerecord.api.app import create_app
@@ -67,7 +67,7 @@ def start_server(cfg: AppConfig, port: int, timeout: float = 15.0):
         time.sleep(0.05)
     scheduler = CollectScheduler(cfg, app.state.collect_lock)
     scheduler.start()
-    return server, scheduler
+    return server, scheduler, app
 
 
 def set_app_identity() -> None:
@@ -116,7 +116,13 @@ def run(cfg: AppConfig | None = None) -> int:
     webview = import_webview()
     set_app_identity()
     port = free_port()
-    server, scheduler = start_server(cfg, port)
+    from farerecord.realprice import RealPriceMonitor
+    from farerecord.sources.ctrip_page import WebviewReader
+
+    server, scheduler, app = start_server(cfg, port)
+    # 固定监测的行程：后台开一个屏幕外的窗口读携程往返订票页上的真实往返价
+    monitor = RealPriceMonitor(cfg, WebviewReader(webview))
+    app.state.real_monitor = monitor
     storage = Path(cfg.database).parent / "webview"  # 记住主题等界面偏好
     try:
         window = webview.create_window(
@@ -129,8 +135,9 @@ def run(cfg: AppConfig | None = None) -> int:
             text_select=True,
         )
         window.events.shown += lambda: style_window(window)
-        webview.start(private_mode=False, storage_path=str(storage))
+        webview.start(monitor.start, private_mode=False, storage_path=str(storage))
     finally:
+        monitor.stop()
         scheduler.stop()
         server.should_exit = True
     return 0

@@ -5,7 +5,7 @@
 在 0.85 左右），用这个比例去估长途组合的往返价，比直接把两张单程相加更接近真实。
 
 校准来源的优先级：
-1. 用户最近手动核过的真实往返价（最可信）
+1. 最近的真实往返价：用户手动核过的，或固定行程从携程往返订票页读到的（最可信）
 2. 最近若干次抓取里，携程往返缓存 ÷ 同一次抓取的两张单程之和
 3. 都没有时比例为 1，即不校准
 
@@ -32,7 +32,7 @@ RATIO_RANGE = (0.6, 1.0)  # 两张单程永远买得到，所以往返预估不�
 @dataclass(frozen=True)
 class Calibration:
     ratio: float = 1.0
-    source: str = "none"  # manual | cache | none
+    source: str = "none"  # manual | page | cache | none
     samples: int = 0
 
     def apply(self, oneway_sum: float) -> float:
@@ -73,10 +73,17 @@ def record(conn: sqlite3.Connection, run_id: int, origin: str, dest: str) -> flo
 def _from_manual(
     conn: sqlite3.Connection, origin: str, dest: str, now: datetime
 ) -> Calibration | None:
+    since = (now - MANUAL_VALID).isoformat()
+    manual = repo.recent_manual_quotes(conn, origin, dest, since)
+    page = repo.recent_real_quotes(conn, origin, dest, since)  # 每个组合只取最新一条
     ratios = []
-    for q in repo.recent_manual_quotes(conn, origin, dest, (now - MANUAL_VALID).isoformat()):
-        depart, ret = date.fromisoformat(q["depart_date"]), date.fromisoformat(q["return_date"])
-        series = repo.combo_series(conn, origin, dest, depart, ret)
+    cache: dict[tuple[str, str], list] = {}
+    for q in manual + page:
+        key = (q["depart_date"], q["return_date"])
+        if key not in cache:
+            depart, ret = date.fromisoformat(key[0]), date.fromisoformat(key[1])
+            cache[key] = repo.combo_series(conn, origin, dest, depart, ret)
+        series = cache[key]
         if not series:
             continue
         # 用核价那一刻（或之后最近一次抓取）的单程价来比
@@ -85,7 +92,7 @@ def _from_manual(
         ratios.append(q["price"] / (out_price + ret_price))
     if not ratios:
         return None
-    return Calibration(_clamp(median(ratios)), "manual", len(ratios))
+    return Calibration(_clamp(median(ratios)), "manual" if manual else "page", len(ratios))
 
 
 def current(

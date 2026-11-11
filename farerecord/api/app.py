@@ -7,7 +7,7 @@ import sqlite3
 import sys
 import threading
 from collections.abc import Callable, Iterator
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -15,9 +15,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from farerecord import db, settings
+from farerecord import db, realprice, settings
 from farerecord import repository as repo
-from farerecord.airlines import airline_json
+from farerecord.airlines import airline_by_name, airline_json
 from farerecord.alerts import recent_log, send_test
 from farerecord.alerts.notifiers import WxPusherSimpleNotifier, build_notifier, make_notifier
 from farerecord.alerts.rules import watch_trip
@@ -38,6 +38,7 @@ from farerecord.envfile import update_env_file
 from farerecord.models import OnewayQuote, PriceWatch, Trip
 from farerecord.settings import effective_config
 from farerecord.sources.base import PriceSource
+from farerecord.sources.ctrip_page import round_url
 
 WEB_DIR = ROOT / "web"
 
@@ -45,10 +46,7 @@ WEB_DIR = ROOT / "web"
 def ctrip_url(origin: str, dest: str, depart: date, ret: date | None = None) -> str:
     o, d = origin.lower(), dest.lower()
     if ret:
-        return (
-            f"https://flights.ctrip.com/online/list/round-{o}-{d}"
-            f"?depdate={depart}_{ret}&cabin=y_s&adult=1&child=0&infant=0"
-        )
+        return round_url(origin, dest, depart, ret)
     return (
         f"https://flights.ctrip.com/online/list/oneway-{o}-{d}"
         f"?depdate={depart}&cabin=y_s&adult=1&child=0&infant=0"
@@ -139,6 +137,13 @@ class WatchPatch(BaseModel):
     enabled: bool | None = None
 
 
+class PinnedIn(BaseModel):
+    origin: str = Field(min_length=3, max_length=3)
+    dest: str = Field(min_length=3, max_length=3)
+    depart: date | None = None  # 两个日期都不传表示取消固定
+    ret: date | None = None
+
+
 class CollectorSettingsIn(BaseModel):
     interval_minutes: int = Field(ge=MIN_INTERVAL_MINUTES, le=1440)
 
@@ -191,6 +196,34 @@ def create_app(
     app.state.cfg = cfg
     app.state.env_file = env_file or cfg.env_file  # 微信口令写到这里
     app.state.collect_lock = threading.Lock()  # 手动抓取和定时抓取共用，避免同时请求携程
+    app.state.real_monitor = None  # 桌面端启动后放进来：读携程往返订票页的后台监测
+
+    def pinned_json(p: realprice.Pinned | None) -> dict[str, Any] | None:
+        if p is None:
+            return None
+        return {"depart": p.depart.isoformat(), "return": p.ret.isoformat()}
+
+    def real_json(
+        conn: sqlite3.Connection, o: str, d: str, depart: date, ret: date, window: int
+    ) -> dict[str, Any]:
+        """这个组合从携程往返订票页读到的真实往返价：走势、统计、最近一次核价的结果。"""
+        quotes = repo.real_quotes(conn, o, d, depart, ret)
+        series = [(q["observed_at"], q["price"]) for q in quotes]
+        pinned = realprice.get_pinned(conn, o, d)
+        is_pinned = pinned is not None and (pinned.depart, pinned.ret) == (depart, ret)
+        age = (
+            datetime.now(UTC) - datetime.fromisoformat(quotes[-1]["observed_at"])
+            if quotes
+            else None
+        )
+        return {
+            "pinned": is_pinned,
+            "series": [[q["observed_at"], q["price"], q["airline"]] for q in quotes],
+            "stats": stats_json(compute(series, window_days=window)),
+            "airline": airline_by_name(quotes[-1]["airline"]) if quotes else None,
+            "fresh": age is not None and age <= realprice.FRESH,
+            "check": realprice.check_state(conn, pinned) if is_pinned and pinned else None,
+        }
 
     def norm(origin: str, dest: str) -> tuple[str, str]:
         o, d = origin.upper(), dest.upper()
@@ -208,6 +241,7 @@ def create_app(
                 "origin": r.origin,
                 "dest": r.dest,
                 "target_price": r.target_price,
+                "pinned": pinned_json(realprice.get_pinned(conn, r.origin, r.dest)),
                 "flex": {
                     "start": r.flex.start.isoformat() if r.flex.start else None,
                     "end": r.flex.end.isoformat() if r.flex.end else None,
@@ -368,8 +402,39 @@ def create_app(
             "series": [[t, p] for t, p in series],
             "stats": stats_json(compute(series, window_days=window)),
             "manual": manual,
+            "real": real_json(conn, o, d, depart, ret, window) if ret else None,
             "ctrip_url": ctrip_url(o, d, depart, ret),
         }
+
+    @app.put("/api/pinned")
+    def save_pinned(conn: Conn, body: PinnedIn) -> dict[str, Any]:
+        """把一个具体的去回日期固定在首页，并开始监测它的携程往返实价。"""
+        o, d = norm(body.origin, body.dest)
+        if cfg.route(o, d) is None:
+            raise HTTPException(404, "config.yaml 里没有这条航线")
+        if body.depart is None or body.ret is None:
+            realprice.set_pinned(conn, o, d, None, None)
+            return {"pinned": None}
+        if body.ret <= body.depart:
+            raise HTTPException(400, "返回日期必须晚于出发日期")
+        if (body.ret - body.depart).days > realprice.MAX_STAY_DAYS:
+            raise HTTPException(400, f"行程最长 {realprice.MAX_STAY_DAYS} 天")
+        if body.depart < datetime.now().astimezone().date():
+            raise HTTPException(400, "出发日期已经过去了")
+        realprice.set_pinned(conn, o, d, body.depart, body.ret)
+        monitor = app.state.real_monitor
+        if monitor is not None:
+            monitor.kick()  # 马上去读一次真实往返价
+        return {"pinned": pinned_json(realprice.get_pinned(conn, o, d))}
+
+    @app.post("/api/real-check", status_code=202)
+    def real_check() -> dict[str, Any]:
+        """让后台马上去携程往返订票页核一次价（只有桌面端有这个能力）。"""
+        monitor = app.state.real_monitor
+        if monitor is None:
+            raise HTTPException(409, "只有桌面端能读取携程往返价，请用 farerecord app 打开")
+        monitor.kick()
+        return {"started": True}
 
     @app.get("/api/status")
     def status(conn: Conn) -> dict[str, Any]:
@@ -385,6 +450,8 @@ def create_app(
             "retention_days": collector.retention_days,
             "next_due_at": due.isoformat() if due else None,
             "collecting": app.state.collect_lock.locked(),
+            "real_monitor": app.state.real_monitor is not None,
+            "real_checking": bool(getattr(app.state.real_monitor, "busy", False)),
             "runs": runs,
             "fail_streak": repo.fail_streak(conn),
             "last_ok_at": last_ok["finished_at"] if last_ok else None,

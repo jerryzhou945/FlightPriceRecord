@@ -361,6 +361,77 @@ def manual_quotes(
     return [dict(r) for r in rows]
 
 
+# ---------- real round-trip quotes (携程往返订票页) ----------
+
+
+def add_real_quote(
+    conn: sqlite3.Connection,
+    origin: str,
+    dest: str,
+    depart: date,
+    ret: date,
+    price: float,
+    airline: str | None = None,
+    observed_at: str | None = None,
+) -> int:
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO real_quote (origin, dest, depart_date, return_date, price, airline, "
+            "observed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                origin,
+                dest,
+                depart.isoformat(),
+                ret.isoformat(),
+                price,
+                airline,
+                observed_at or utcnow_iso(),
+            ),
+        )
+    return int(cur.lastrowid)
+
+
+def real_quotes(
+    conn: sqlite3.Connection, origin: str, dest: str, depart: date, ret: date
+) -> list[dict[str, Any]]:
+    """某个去回组合读到过的所有真实往返价，按时间升序。"""
+    rows = conn.execute(
+        "SELECT * FROM real_quote WHERE origin=? AND dest=? AND depart_date=? AND return_date=? "
+        "ORDER BY observed_at",
+        (origin, dest, depart.isoformat(), ret.isoformat()),
+    )
+    return [dict(r) for r in rows]
+
+
+def latest_real_quote(
+    conn: sqlite3.Connection, origin: str, dest: str, depart: date, ret: date
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM real_quote WHERE origin=? AND dest=? AND depart_date=? AND return_date=? "
+        "ORDER BY observed_at DESC LIMIT 1",
+        (origin, dest, depart.isoformat(), ret.isoformat()),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def recent_real_quotes(
+    conn: sqlite3.Connection, origin: str, dest: str, since: str
+) -> list[dict[str, Any]]:
+    """since（UTC ISO）之后，每个去回组合最新的一条真实往返价。"""
+    rows = conn.execute(
+        "SELECT *, MAX(observed_at) FROM real_quote WHERE origin=? AND dest=? AND observed_at >= ? "
+        "GROUP BY depart_date, return_date",
+        (origin, dest, since),
+    )
+    return [dict(r) for r in rows]
+
+
+def prune_real_quotes(conn: sqlite3.Connection, before: str) -> int:
+    with conn:
+        cur = conn.execute("DELETE FROM real_quote WHERE observed_at < ?", (before,))
+    return cur.rowcount
+
+
 # ---------- price watches ----------
 
 

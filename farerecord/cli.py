@@ -39,9 +39,13 @@ def cmd_collect(args: argparse.Namespace) -> int:
         res = collect_and_alert(conn, cfg, if_due=args.if_due, alerts=not args.no_alerts)
     except CollectionNotDue:
         print("距离上次抓取还不到一个间隔，跳过。")
-        return 0
+        res = None
     finally:
         conn.close()
+    if not args.no_real_check:
+        _check_real_prices(cfg)
+    if res is None:
+        return 0
     labels = {"ok": "成功", "partial": "部分成功", "failed": "失败"}
     print(f"抓取{labels[res.status]}：共 {res.n_quotes} 条报价（run #{res.run_id}）")
     for key, n in res.per_route.items():
@@ -49,6 +53,29 @@ def cmd_collect(args: argparse.Namespace) -> int:
     for err in res.errors:
         print(f"  ⚠ {err}")
     return 0 if res.status != "failed" else 1
+
+
+def _check_real_prices(cfg) -> None:
+    """固定监测的行程到点了，就去携程往返订票页读一次真实往返价（需要桌面组件）。"""
+    from farerecord import realprice
+
+    conn = db.connect(cfg.database)
+    try:
+        due = realprice.any_due(conn, cfg)
+    finally:
+        conn.close()
+    if not due:
+        return
+    try:
+        import webview
+    except ImportError:
+        print('固定行程的携程往返价需要桌面组件：pip install -e ".[desktop]"')
+        return
+    labels = {"ok": "读到", "blocked": "被要求登录或验证", "empty": "没有读到", "error": "出错"}
+    for r in realprice.run_standalone(cfg, webview):
+        detail = f"¥{r['price']:,.0f}" if r["price"] else (r["message"] or "")
+        trip = r["trip"].replace("_", " → ")
+        print(f"携程往返价（{trip}）{labels.get(r['status'], r['status'])}：{detail}")
 
 
 def _route_or_default(cfg, spec: str | None):
@@ -177,6 +204,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--if-due",
         action="store_true",
         help="距离上次抓取不到一个间隔（collector.interval_minutes）就跳过，定时任务用",
+    )
+    s.add_argument(
+        "--no-real-check",
+        action="store_true",
+        help="不去携程往返订票页读固定行程的真实往返价",
     )
     s.set_defaults(func=cmd_collect)
 

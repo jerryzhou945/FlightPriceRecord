@@ -113,7 +113,12 @@ def watch_trip(conn: sqlite3.Connection, watch: PriceWatch) -> Trip | None:
     back = repo.latest_oneway(conn, d, o).get(watch.return_date)
     if not out or not back:
         return None
-    rt = repo.latest_roundtrip(conn, o, d).get((watch.depart_date, watch.return_date))
+    from farerecord.realprice import fresh_real_price
+
+    # 携程往返订票页上刚读到的真实价格最可信，其次是往返日历的缓存
+    rt = fresh_real_price(
+        conn, o, d, watch.depart_date, watch.return_date
+    ) or repo.latest_roundtrip(conn, o, d).get((watch.depart_date, watch.return_date))
     ratio = calibration.current(conn, o, d).ratio
     return Trip(watch.depart_date, watch.return_date, out, back, rt, ratio)
 
@@ -172,7 +177,9 @@ def build_price_message(
     lines += [
         "",
         "触发：" + "、".join(RULE_LABELS[r] for r in rules),
-        "价格是按单程价推算的预估，以携程实际报价为准。",
+        "这是携程页面上的往返含税价，下单前请再确认。"
+        if trip.rt_price
+        else "价格是按单程价推算的预估，以携程实际报价为准。",
         f"[去携程核价]({url})",
     ]
     return Message(title, "\n".join(lines), url, alerts)

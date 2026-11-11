@@ -63,7 +63,11 @@
           </label>
           <div class="trip-line">
             <span id="ovSub">—</span>
-            <button class="link-btn" id="changeTrip" type="button">换一个组合</button>
+            <span class="pin-chip" id="pinChip" hidden>已固定监测</span>
+            <button class="link-btn" id="editTrip" type="button">改日期</button>
+            <button class="link-btn" id="pinThis" type="button" hidden>固定这个行程</button>
+            <button class="link-btn" id="backPinned" type="button" hidden></button>
+            <button class="link-btn" id="changeTrip" type="button">去弹性行程挑</button>
           </div>
         </div>
         <div class="focus-controls">
@@ -123,7 +127,7 @@
           <div class="leg-card" id="legOut"></div>
           <div class="leg-plus" aria-hidden="true">＋</div>
           <div class="leg-card" id="legRet"></div>
-          <div class="leg-plus" aria-hidden="true">＝</div>
+          <div class="leg-plus" id="legEq" aria-hidden="true">＝</div>
           <div class="leg-card total" id="legTotal"></div>
         </div>
         <p class="explain" id="calExplain"></p>
@@ -312,6 +316,22 @@
     <div class="dlg-actions">
       <button class="btn" type="button" id="manualCancel">取消</button>
       <button class="btn accent" type="submit" id="manualSave">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="tripDlg" class="dlg">
+  <form method="dialog" id="tripForm">
+    <h3>首页看哪个行程</h3>
+    <p class="hint">填你打算买的去程和回程日期。固定之后，首页一直显示这个行程，并定时去携程往返订票页读它的真实往返价。</p>
+    <div class="field"><label for="tDepart">去程日期</label><input id="tDepart" type="date" required></div>
+    <div class="field"><label for="tReturn">回程日期</label><input id="tReturn" type="date" required></div>
+    <label class="check"><input id="tPin" type="checkbox" checked><span>固定在首页，并监测携程往返实价</span></label>
+    <p class="form-error" id="tripError" hidden></p>
+    <div class="dlg-actions">
+      <button class="btn ghost" type="button" id="tripUnpin" hidden>取消固定</button>
+      <button class="btn" type="button" id="tripCancel">取消</button>
+      <button class="btn accent" type="submit">确定</button>
     </div>
   </form>
 </dialog>
