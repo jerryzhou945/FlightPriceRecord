@@ -46,6 +46,20 @@ def recent_runs(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, Any
     return [dict(r) for r in rows]
 
 
+def fail_stale_runs(conn: sqlite3.Connection, before: str) -> int:
+    """把 before（UTC ISO）之前开始、却一直停在"进行中"的抓取标为失败。
+
+    程序在抓取途中被关掉（比如关了桌面窗口）就会留下这样的记录。
+    """
+    with conn:
+        cur = conn.execute(
+            "UPDATE fetch_run SET status='failed', finished_at=started_at, "
+            "error='抓取被中断（程序在抓取途中退出）' WHERE status='running' AND started_at < ?",
+            (before,),
+        )
+    return cur.rowcount
+
+
 def last_run_started_at(conn: sqlite3.Connection) -> str | None:
     """最近一次抓取（不论成败）的开始时间。"""
     row = conn.execute("SELECT started_at FROM fetch_run ORDER BY id DESC LIMIT 1").fetchone()

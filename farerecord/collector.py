@@ -106,6 +106,7 @@ def attribute_airlines(
     return [best.get(q.depart_date, q) for q in quotes]
 
 
+STALE_RUN_AFTER = timedelta(minutes=15)  # 一次抓取最多一两分钟，停在“进行中”这么久就是被中断了
 DUE_SLACK = timedelta(minutes=5)  # 定时器有抖动，提前这么久也算到点
 
 
@@ -145,6 +146,8 @@ def collect(
             conn.execute("BEGIN IMMEDIATE")
             if not is_due(conn, cfg.collector.interval_minutes):
                 raise CollectionNotDue
+        stale = datetime.fromisoformat(now()) - STALE_RUN_AFTER
+        repo.fail_stale_runs(conn, stale.isoformat())
         run_id = repo.start_run(conn, source.name, now())
     result = CollectResult(run_id=run_id, status="failed")
     first_call = True
