@@ -190,8 +190,9 @@ def test_due_respects_interval_and_backs_off_when_blocked(conn) -> None:
     assert realprice.is_due(conn, PIN, half_hour, NOW + timedelta(hours=6))
 
 
-def test_check_interval_never_below_thirty_minutes() -> None:
-    assert realprice.check_interval(cfg(interval_minutes=15)) == timedelta(minutes=30)
+def test_check_interval_follows_collector_with_a_floor() -> None:
+    assert realprice.check_interval(cfg(interval_minutes=15)) == timedelta(minutes=15)
+    assert realprice.check_interval(cfg()) == timedelta(minutes=30)  # 默认跟抓取间隔一致
     assert realprice.check_interval(cfg(interval_minutes=120)) == timedelta(minutes=120)
 
 

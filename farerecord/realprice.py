@@ -4,7 +4,7 @@
 桌面端窗口开着时会按间隔在后台打开携程的往返订票页，读出页面上的往返含税价并记下来，
 首页的大数字和走势就用这个真实价格，而不是推算的预估。
 
-每条航线只固定一个行程，所以每次只打开一个页面；间隔不短于 30 分钟。
+每条航线只固定一个行程，所以每次只打开一个页面；间隔跟抓取间隔走，不短于 15 分钟。
 读不到（页面要求登录、出现验证码、没加载出来）会记下原因并显示在界面上，
 被拦住时隔 6 小时才再试——不做任何绕过，这时请点"去携程核价"自己看。
 """
@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 PINNED_PREFIX = "pinned_trip:"  # setting 表里：pinned_trip:CHI-SHA → {"depart", "return"}
 CHECK_PREFIX = "real_check:"  # 最近一次核价的结果
-MIN_INTERVAL_MINUTES = 30
+MIN_INTERVAL_MINUTES = 15
 BLOCK_BACKOFF = timedelta(hours=6)  # 被要求登录/验证后，隔这么久才再试
 DUE_SLACK = timedelta(minutes=2)
 FRESH = timedelta(hours=3)  # 这么久以内读到的实价才当作"现在的价格"用于提醒

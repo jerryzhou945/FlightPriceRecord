@@ -7,7 +7,7 @@
 边界（和 CLAUDE.md 的抓取规则一致）：
 - 不直接调用携程的搜索接口，不构造或破解任何签名，不改 User-Agent 和设备指纹，不用代理
 - 页面要求登录或出现验证码时立刻放弃并如实报告（PageBlocked），之后隔很久才再试，不做任何绕过
-- 只查用户固定监测的那一个行程，频率不超过每 30 分钟一次（见 farerecord/realprice.py）
+- 只查用户固定监测的那一个行程，频率不超过每 15 分钟一次（见 farerecord/realprice.py）
 """
 
 from __future__ import annotations
