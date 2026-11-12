@@ -433,7 +433,7 @@ function renderPlanner() {
   $("tips").innerHTML = f.suggestions.map((s) => `<li>${esc(s)}</li>`).join("");
   const ratioNote = f.calibration && f.calibration.ratio < 1 ? `往返预估 = 两张单程 × ${Math.round(f.calibration.ratio * 100)}%` : "价格 = 两张单程合计";
   $("heatHint").textContent = f.observed_at
-    ? `数据 ${fmtTime(f.observed_at)} · ${ratioNote} · 点格子选中该组合`
+    ? `数据 ${fmtTime(f.observed_at)} · ${ratioNote} · 点格子去携程看该组合`
     : "还没有数据";
   if (heatChart) renderHeat();
   renderTop();
@@ -452,7 +452,7 @@ function renderHeat() {
       ...tooltipStyle(),
       formatter: (p) => {
         const dep = dates[p.value[0]], s = stays[p.value[1]], ret = addDays(dep, s);
-        return `${md(dep)} ${wd(dep)} → ${md(ret)} ${wd(ret)}<br>${s} 天 · <b>${yuan(p.value[2])}</b>`;
+        return `${md(dep)} ${wd(dep)} → ${md(ret)} ${wd(ret)}<br>${s} 天 · <b>${yuan(p.value[2])}</b><br><span style="opacity:.6">点击去携程查看</span>`;
       },
     },
     xAxis: { type: "category", data: dates.map(md), axisTick: { show: false }, axisLine: { show: false },
@@ -470,9 +470,9 @@ function renderHeat() {
   }, true);
   heatChart.off("click");
   heatChart.on("click", (p) => {
+    // 点格子直接去携程看这个去回组合的往返订票页（桌面端会用系统浏览器打开）
     const dep = dates[p.value[0]], s = stays[p.value[1]], ret = addDays(dep, s);
-    const known = f.top.concat(f.by_days).find((t) => t.depart === dep && t.return === ret);
-    select(known || { depart: dep, return: ret, days: s, best_price: p.value[2], ctrip_url: ctripUrl(o, d, dep, ret) });
+    window.open(ctripUrl(o, d, dep, ret), "_blank", "noopener");
   });
 }
 
