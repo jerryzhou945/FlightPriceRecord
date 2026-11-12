@@ -69,6 +69,10 @@ routes:
 | `farerecord notify-test` | 发一条测试提醒 |
 | `farerecord init-db` | 创建数据库（一般不需要手动运行） |
 
+## 添加出发地
+
+首页左上角的航线下拉框最后一项是"＋ 添加出发地…"：选一个出发城市（纽约、洛杉矶、底特律、多伦多……也可以直接填携程城市三字码）和目的地，就会多监测一条航线，并马上抓取一次。最多同时监测 4 条航线，每多一条，每次抓取大约多 1 分钟。界面里添加的航线可以在同一个窗口里删除；写在 `config.yaml` 里的航线要改配置文件。
+
 ## 买还是等
 
 首页走势下面的"买还是等"卡片会根据离出发的天数、是否旺季（圣诞元旦、春节、暑假）、监测以来的价格位置和跳涨，给出 **建议现在买 / 设提醒限期内买 / 可以再等等**，并标出建议的最晚购买日和常见的涨价节点（出发前 42 / 28 / 21 / 14 / 7 天）。点"降到 ¥… 时提醒我"可一键设到价提醒。卡片还会列出前后挪几天可能更便宜的日期（按单程日历推算，点开到携程核实）。
@@ -99,8 +103,8 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 默认使用 Windows 桌面通知。要让手机也收到，打开「提醒」页，在"微信推送"一行点**设置**：
 
-- **WxPusher 扫码（推荐）**：用微信扫界面里的二维码，把收到的 `SPT_` 口令粘贴进去即可，不用注册或建应用
-- **PushPlus**：在 [pushplus.plus](https://www.pushplus.plus) 微信登录后复制 token
+- **PushPlus（推荐，微信里收）**：在 [pushplus.plus](https://www.pushplus.plus) 微信登录后复制 token，提醒出现在微信的 pushplus 公众号里
+- **WxPusher 扫码**：用微信扫界面里的二维码，把收到的 `SPT_` 口令粘贴进去。注意 WxPusher 现在把消息推到它自己的 App，需要装 WxPusher App 并用同一个微信登录，微信公众号里收不到
 - **WxPusher 应用**：在 [WxPusher 后台](https://wxpusher.zjiecode.com/admin/) 建应用，填 APP_TOKEN 和 UID
 
 保存后会立刻发一条测试消息。口令只写进本机的 `.env`（不进仓库），也可以手动编辑 `.env`（见 `.env.example`）并在 `config.yaml` 里设置 `alerts.channel`。命令行测试：`farerecord notify-test`。

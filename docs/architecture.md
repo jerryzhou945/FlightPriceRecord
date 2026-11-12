@@ -116,6 +116,7 @@ daily_price    (kind, origin, dest, depart_date, return_date, observed_date, low
 - `observed_at` 统一存 UTC ISO 字符串，展示时转北京时间
 - 任意组合的历史走势 = 对每次抓取（run）取 `(out[d] + ret[r]) × 校准比例`，不需要单独存组合
 - `rt_calibration (run_id, origin, dest, ratio, samples)`：每次抓取算出的"真实往返价 ÷ 两张单程之和"（只用停留 ≥ 10 天的缓存组合，至少 8 个样本）
+- 界面里添加的航线存在 `setting`：`routes.extra → [{origin, dest}]`，和 config.yaml 的航线合并（`settings.effective_config`），弹性窗口沿用第一条航线，最多共 4 条；删除只停止抓取、取消固定行程、停用到价提醒，已抓到的价格保留
 - 固定的行程存在 `setting`：`pinned_trip:CHI-SHA → {depart, return}`；最近一次核价的结果存在 `real_check:CHI-SHA → {at, trip, status: ok|blocked|empty|error|running, message, price}`
 - `fetch_run` 超过 `retention_days` 的记录连同报价一起清理（`real_quote` 也按同样的期限清理）；停在 running 超过 15 分钟的记录在下次抓取时标为 failed
 - `daily_price` 是每天的价格留档：`kind=oneway` 为日历单程最低价，`kind=real` 为携程往返实价；`observed_date` 是北京时间日期，`low/high/n` 是当天的最低、最高、次数。写报价时顺手合并，**不随旧抓取清理**，用于和往年同期对比（v7 升级时用已有报价回填）
@@ -184,6 +185,8 @@ daily_price    (kind, origin, dest, depart_date, return_date, observed_date, low
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/routes` | 关注的航线与配置 |
+| GET | `/api/cities` | 界面可选的城市（携程城市三字码，按北美 / 中国分组） |
+| POST / DELETE | `/api/routes`、`/api/routes/{origin}/{dest}` | 添加航线（换个出发地）；删除界面里添加的航线（config.yaml 里的删不了） |
 | GET | `/api/calendar?origin&dest&month` | 某方向某月每天最新价 + 当月分档 |
 | GET | `/api/flex?origin&dest&start&end&min&max&ideal` | 弹性行程矩阵、Top N、微调建议 |
 | GET | `/api/history?origin&dest&depart&return&days` | 组合（或单程）价格历史序列 + 统计；`real` 里是携程往返实价的序列、统计和最近一次核价结果 |
