@@ -27,6 +27,7 @@ from farerecord.analysis.calibration import Calibration
 from farerecord.analysis.flex import FlexQuery, search, suggestions
 from farerecord.analysis.history import flex_low_history
 from farerecord.analysis.stats import PriceStats, compute
+from farerecord.cities import CITY_GROUPS
 from farerecord.collector import collect_and_alert, next_due_at
 from farerecord.config import (
     MIN_INTERVAL_MINUTES,
@@ -145,6 +146,11 @@ class PinnedIn(BaseModel):
     ret: date | None = None
 
 
+class RouteIn(BaseModel):
+    origin: str = Field(min_length=3, max_length=3)
+    dest: str = Field(min_length=3, max_length=3)
+
+
 class CollectorSettingsIn(BaseModel):
     interval_minutes: int = Field(ge=MIN_INTERVAL_MINUTES, le=1440)
 
@@ -235,10 +241,12 @@ def create_app(
     @app.get("/api/routes")
     def routes(conn: Conn) -> list[dict[str, Any]]:
         current = effective_config(conn, cfg)
+        fixed = {r.key for r in cfg.routes}
         return [
             {
                 "key": r.key,
                 "name": r.name,
+                "custom": r.key not in fixed,  # 界面里添加的，可以删
                 "origin": r.origin,
                 "dest": r.dest,
                 "target_price": r.target_price,
@@ -253,6 +261,39 @@ def create_app(
             }
             for r in current.routes
         ]
+
+    @app.get("/api/cities")
+    def cities() -> list[dict[str, Any]]:
+        """界面里可选的出发地 / 目的地（携程城市三字码）。"""
+        return [
+            {"group": g, "cities": [{"code": c, "name": n} for c, n in items]}
+            for g, items in CITY_GROUPS
+        ]
+
+    @app.post("/api/routes", status_code=201)
+    def add_route(conn: Conn, body: RouteIn) -> dict[str, Any]:
+        """添加一条要监测的航线（比如换个出发地）；下次抓取开始记录它的价格。"""
+        o, d = norm(body.origin, body.dest)
+        if o == d:
+            raise HTTPException(400, "出发地和目的地不能相同")
+        try:
+            route = settings.add_route(conn, cfg, o, d)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"key": route.key, "name": route.name, "origin": o, "dest": d}
+
+    @app.delete("/api/routes/{origin}/{dest}", status_code=204)
+    def delete_route(conn: Conn, origin: str, dest: str) -> None:
+        """删掉界面里添加的航线：取消它的固定行程、停用它的到价提醒；已抓到的价格保留。"""
+        o, d = norm(origin, dest)
+        if cfg.route(o, d):
+            raise HTTPException(400, "这条航线写在 config.yaml 里，请在配置文件里删")
+        if not settings.remove_route(conn, o, d):
+            raise HTTPException(404, "没有这条航线")
+        realprice.set_pinned(conn, o, d, None, None)
+        for w in repo.list_watches(conn):
+            if (w.origin, w.dest) == (o, d):
+                repo.update_watch(conn, w.id, enabled=False)
 
     @app.get("/api/calendar")
     def calendar(
@@ -484,8 +525,8 @@ def create_app(
     def save_pinned(conn: Conn, body: PinnedIn) -> dict[str, Any]:
         """把一个具体的去回日期固定在首页，并开始监测它的携程往返实价。"""
         o, d = norm(body.origin, body.dest)
-        if cfg.route(o, d) is None:
-            raise HTTPException(404, "config.yaml 里没有这条航线")
+        if effective_config(conn, cfg).route(o, d) is None:
+            raise HTTPException(404, "没有监测这条航线")
         if body.depart is None or body.ret is None:
             realprice.set_pinned(conn, o, d, None, None)
             return {"pinned": None}
@@ -639,9 +680,9 @@ def create_app(
                 raise HTTPException(400, "免打扰时段格式应为 23:00-08:00") from exc
         if "target_price" in sent:
             o, d = norm(body.origin or "", body.dest or "")
-            route = cfg.route(o, d)
+            route = effective_config(conn, cfg).route(o, d)
             if route is None:
-                raise HTTPException(404, f"没有配置航线 {o}-{d}")
+                raise HTTPException(404, f"没有监测航线 {o}-{d}")
             settings.save(conn, settings.TARGET_PREFIX + route.key, sent["target_price"])
         for key in settings.ALERT_KEYS:
             if key in sent and sent[key] is not None:
