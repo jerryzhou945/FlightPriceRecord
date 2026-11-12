@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -108,6 +108,30 @@ _MIGRATIONS: dict[int, str] = {
         observed_at TEXT NOT NULL
     );
     CREATE INDEX ix_real_trip ON real_quote(origin, dest, depart_date, return_date, observed_at);
+    """,
+    7: """
+    CREATE TABLE daily_price (                 -- 每天的价格留档，不随旧抓取清理；用于和往年同期对比
+        kind          TEXT NOT NULL,           -- oneway：日历单程最低价；real：携程往返实价
+        origin        TEXT NOT NULL,
+        dest          TEXT NOT NULL,
+        depart_date   TEXT NOT NULL,
+        return_date   TEXT NOT NULL DEFAULT '',  -- 单程为空串
+        observed_date TEXT NOT NULL,           -- 观测日（北京时间 YYYY-MM-DD）
+        low           REAL NOT NULL,
+        high          REAL NOT NULL,
+        n             INTEGER NOT NULL,
+        PRIMARY KEY (kind, origin, dest, depart_date, return_date, observed_date)
+    );
+    INSERT INTO daily_price
+        SELECT 'oneway', origin, dest, depart_date, '', date(observed_at, '+8 hours'),
+               MIN(price), MAX(price), COUNT(*)
+        FROM oneway_quote WHERE date(observed_at, '+8 hours') IS NOT NULL
+        GROUP BY origin, dest, depart_date, date(observed_at, '+8 hours');
+    INSERT INTO daily_price
+        SELECT 'real', origin, dest, depart_date, return_date, date(observed_at, '+8 hours'),
+               MIN(price), MAX(price), COUNT(*)
+        FROM real_quote WHERE date(observed_at, '+8 hours') IS NOT NULL
+        GROUP BY origin, dest, depart_date, return_date, date(observed_at, '+8 hours');
     """,
 }
 

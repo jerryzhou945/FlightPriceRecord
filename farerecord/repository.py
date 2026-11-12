@@ -4,14 +4,65 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 from farerecord.models import OnewayQuote, PriceWatch, RoundtripQuote
 
+BEIJING = timezone(timedelta(hours=8))
+
 
 def utcnow_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def beijing_date(iso: str) -> str | None:
+    """UTC ISO 时间戳 → 北京时间的日期 YYYY-MM-DD；解析不了返回 None。"""
+    try:
+        return datetime.fromisoformat(iso).astimezone(BEIJING).date().isoformat()
+    except ValueError:
+        return None
+
+
+# ---------- daily archive ----------
+
+_ARCHIVE_SQL = (
+    "INSERT INTO daily_price (kind, origin, dest, depart_date, return_date, observed_date, "
+    "low, high, n) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) "
+    "ON CONFLICT (kind, origin, dest, depart_date, return_date, observed_date) DO UPDATE SET "
+    "low = MIN(low, excluded.low), high = MAX(high, excluded.high), n = n + 1"
+)
+
+
+def _archive(
+    conn: sqlite3.Connection, rows: list[tuple[str, str, str, str, str, float]], day: str | None
+) -> None:
+    """把报价并入当天的留档（最低、最高、次数）。在调用方的事务里执行。"""
+    if day is None:
+        return
+    conn.executemany(_ARCHIVE_SQL, [(k, o, d, dep, r, day, p, p) for k, o, d, dep, r, p in rows])
+
+
+def daily_prices(
+    conn: sqlite3.Connection,
+    kind: str,
+    origin: str,
+    dest: str,
+    first: date,
+    last: date,
+    ret: date | None = None,
+) -> list[dict[str, Any]]:
+    """出发日在 [first, last] 内的每日留档，按出发日、观测日升序。"""
+    sql = (
+        "SELECT * FROM daily_price WHERE kind=? AND origin=? AND dest=? "
+        "AND depart_date BETWEEN ? AND ?"
+    )
+    args: list[Any] = [kind, origin, dest, first.isoformat(), last.isoformat()]
+    if ret is not None:
+        sql += " AND return_date=?"
+        args.append(ret.isoformat())
+    rows = conn.execute(sql + " ORDER BY depart_date, observed_date", args)
+    return [dict(r) for r in rows]
 
 
 # ---------- fetch_run ----------
@@ -103,6 +154,9 @@ def save_oneway(
             "(run_id, origin, dest, depart_date, price, observed_at, airline, airline_price) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
+        )
+        _archive(
+            conn, [("oneway", r[1], r[2], r[3], "", r[4]) for r in rows], beijing_date(observed_at)
         )
     return len(rows)
 
@@ -387,6 +441,11 @@ def add_real_quote(
                 airline,
                 observed_at or utcnow_iso(),
             ),
+        )
+        _archive(
+            conn,
+            [("real", origin, dest, depart.isoformat(), ret.isoformat(), price)],
+            beijing_date(observed_at or utcnow_iso()),
         )
     return int(cur.lastrowid)
 
