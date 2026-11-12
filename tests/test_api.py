@@ -193,3 +193,22 @@ def test_airlines_in_calendar_flex_and_history(setup) -> None:
     body = h.json()
     assert body["out_airline"]["code"] == "CX" and body["ret_airline"]["code"] == "KE"
     assert body["legs"] == {"out": 3800, "ret": 3700, "sum": 7500}
+
+
+def test_advice(setup) -> None:
+    client, cfg = setup
+    conn = db.connect(cfg.database)
+    repo.add_real_quote(conn, "CHI", "SHA", D, R, 7400, "土耳其航空", "2026-11-10T01:00:00+00:00")
+    repo.add_real_quote(conn, "CHI", "SHA", D, R, 7200, "土耳其航空", "2026-11-10T02:00:00+00:00")
+    conn.close()
+    params = {"origin": "CHI", "dest": "SHA", "depart": D.isoformat(), "ret": R.isoformat()}
+    body = client.get("/api/advice", params=params).json()
+    assert body["basis"] == "real" and body["current"] == 7200 and body["low"] == 7200
+    assert body["verdict"] in ("buy", "watch", "wait") and body["reasons"]
+    assert body["peak"] == "圣诞元旦假期" and body["deadline"] == "2026-11-18"
+    assert body["jumps"][0]["after"] == 7200 and body["archive_from"] == "2026-11-09"
+    # 没有实价时用往返预估
+    other = {**params, "depart": "2026-12-29"}
+    assert client.get("/api/advice", params=other).json()["basis"] == "estimate"
+    bad = {**params, "ret": "2026-12-01"}
+    assert client.get("/api/advice", params=bad).status_code == 400

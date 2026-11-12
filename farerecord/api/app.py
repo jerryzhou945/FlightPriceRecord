@@ -7,7 +7,7 @@ import sqlite3
 import sys
 import threading
 from collections.abc import Callable, Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -21,6 +21,7 @@ from farerecord.airlines import airline_by_name, airline_json
 from farerecord.alerts import recent_log, send_test
 from farerecord.alerts.notifiers import WxPusherSimpleNotifier, build_notifier, make_notifier
 from farerecord.alerts.rules import watch_trip
+from farerecord.analysis import advice as buy_advice
 from farerecord.analysis import calibration
 from farerecord.analysis.calibration import Calibration
 from farerecord.analysis.flex import FlexQuery, search, suggestions
@@ -404,6 +405,79 @@ def create_app(
             "manual": manual,
             "real": real_json(conn, o, d, depart, ret, window) if ret else None,
             "ctrip_url": ctrip_url(o, d, depart, ret),
+        }
+
+    @app.get("/api/advice")
+    def advice(conn: Conn, origin: str, dest: str, depart: date, ret: date) -> dict[str, Any]:
+        """买还是等：离出发天数、旺季、监测以来的价格位置、往年同期、附近更便宜的日期。"""
+        o, d = norm(origin, dest)
+        if ret <= depart:
+            raise HTTPException(400, "返回日期必须晚于出发日期")
+        today = datetime.now().astimezone().date()  # 和出发日同一个口径：本机日期
+        real = repo.real_quotes(conn, o, d, depart, ret)
+        if real:
+            series, basis = [(q["observed_at"], q["price"]) for q in real], "real"
+        else:
+            cal = calibration.current(conn, o, d)
+            rows = repo.combo_series(conn, o, d, depart, ret)
+            series, basis = [(t, cal.apply(a + b)) for t, a, b in rows], "estimate"
+        current = series[-1][1] if series else 0.0
+        out_q = repo.latest_oneway_detail(conn, o, d)
+        back_q = repo.latest_oneway_detail(conn, d, o)
+        alts = buy_advice.cheaper_nearby(out_q, back_q, depart, ret, current, today)
+        days_left = (depart - today).days
+        ly = depart - timedelta(days=365)
+        rows = repo.daily_prices(
+            conn, "oneway", o, d, ly - timedelta(days=3), ly + timedelta(days=3)
+        )
+        last_year = buy_advice.last_year_outlook(rows, depart, days_left)
+        a = buy_advice.advise(
+            today, depart, ret, series, basis, alternatives=alts, last_year=last_year
+        )
+        archive_from = conn.execute("SELECT MIN(observed_date) FROM daily_price").fetchone()[0]
+        return {
+            "verdict": a.verdict,
+            "headline": a.headline,
+            "reasons": a.reasons,
+            "days_left": a.days_left,
+            "peak": a.peak,
+            "deadline": a.deadline.isoformat(),
+            "target": a.target,
+            "current": a.current,
+            "low": a.low,
+            "low_at": a.low_at,
+            "high": a.high,
+            "basis": a.basis,
+            "n": len(series),
+            "since": series[0][0] if series else None,
+            "jumps": [
+                {"at": j.at, "before": j.before, "after": j.after, "days_left": j.days_left}
+                for j in a.jumps[-6:]
+            ],
+            "fences": [f.isoformat() for f in a.fences],
+            "alternatives": [
+                {
+                    "depart": x.depart.isoformat(),
+                    "return": x.ret.isoformat(),
+                    "days": (x.ret - x.depart).days,
+                    "oneway_sum": x.oneway_sum,
+                    "expected": x.expected,
+                    "saving": x.saving,
+                    "out_airline": airline_json(x.out_quote),
+                    "ret_airline": airline_json(x.ret_quote),
+                    "ctrip_url": ctrip_url(o, d, x.depart, x.ret),
+                }
+                for x in a.alternatives
+            ],
+            "last_year": {
+                "depart": a.last_year.depart.isoformat(),
+                "change_pct": round(a.last_year.change_pct, 4),
+                "days_left": a.last_year.days_left,
+                "later_days_left": a.last_year.later_days_left,
+            }
+            if a.last_year
+            else None,
+            "archive_from": archive_from,
         }
 
     @app.put("/api/pinned")
