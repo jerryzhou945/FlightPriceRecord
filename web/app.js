@@ -156,6 +156,83 @@ function readForm() {
   return { start, end, min, max, ideal: +$("fIdeal").value || null };
 }
 
+/* ---------------- 航线 / 出发地 ---------------- */
+function fillRouteSel(index) {
+  $("routeSel").innerHTML = state.routes
+    .map((r, i) => `<option value="${i}">${esc(r.origin)} ⇄ ${esc(r.dest)} · ${esc(r.name)}</option>`)
+    .join("") + `<option value="add">＋ 添加出发地…</option>`;
+  $("routeSel").value = String(index);
+}
+let cityGroups = null;
+async function openRoutes() {
+  if (!cityGroups) {
+    try { cityGroups = await api("/api/cities"); } catch (e) { toast(e.message, true); return; }
+  }
+  const taken = new Set(state.routes.map((r) => r.key));
+  const dest = state.route ? state.route.dest : "SHA";
+  const opts = (skip) => cityGroups.map((g) => `<optgroup label="${esc(g.group)}">${g.cities
+    .filter((c) => c.code !== skip)
+    .map((c) => `<option value="${c.code}">${esc(c.name)}（${c.code}）</option>`).join("")}</optgroup>`).join("");
+  $("rDest").innerHTML = opts(null);
+  $("rDest").value = dest;
+  $("rOrigin").innerHTML = opts(null) + `<option value="other">其他城市（填三字码）</option>`;
+  // 默认选一个还没监测的北美城市
+  const first = cityGroups[0].cities.find((c) => !taken.has(`${c.code}-${dest}`) && c.code !== dest);
+  $("rOrigin").value = first ? first.code : "other";
+  $("rCodeField").hidden = $("rOrigin").value !== "other";
+  $("rCode").value = "";
+  const custom = state.routes.filter((r) => r.custom);
+  $("routeList").innerHTML = custom.length
+    ? `<div class="k">你添加的航线</div>` + custom.map((r) => `
+      <div class="route-item"><span>${esc(r.origin)} ⇄ ${esc(r.dest)} · ${esc(r.name)}</span>
+        <button class="btn sm ghost" type="button" data-del="${esc(r.origin)}/${esc(r.dest)}">删除</button></div>`).join("")
+    : "";
+  $("routeList").querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deleteRoute(b.dataset.del)));
+  $("routeLimit").textContent = `现在监测 ${state.routes.length} 条航线，最多 4 条（每多一条，每次抓取约多 1 分钟）。`;
+  $("routeError").hidden = true;
+  $("routeDlg").showModal();
+}
+async function reloadRoutes(key) {
+  state.routes = await api("/api/routes");
+  const i = Math.max(0, state.routes.findIndex((r) => r.key === key));
+  fillRouteSel(i);
+  setRoute(state.routes[i]);
+  await loadAll();
+}
+async function saveRoute(e) {
+  e.preventDefault();
+  const origin = ($("rOrigin").value === "other" ? $("rCode").value : $("rOrigin").value).trim().toUpperCase();
+  const dest = $("rDest").value;
+  if (!/^[A-Z]{3}$/.test(origin)) {
+    $("routeError").textContent = "请填 3 个字母的城市三字码";
+    $("routeError").hidden = false;
+    return;
+  }
+  try {
+    const r = await sendJson("/api/routes", "POST", { origin, dest });
+    $("routeDlg").close();
+    toast(`已添加 ${r.name}，正在抓取它的价格…`);
+    await reloadRoutes(r.key);
+    collectNow();
+  } catch (err) {
+    $("routeError").textContent = err.message;
+    $("routeError").hidden = false;
+  }
+}
+async function deleteRoute(path) {
+  const [o, d] = path.split("/");
+  if (!confirm(`删除 ${o} ⇄ ${d}？之后不再抓取这条航线，它的固定行程和到价提醒会停用；已经记下的价格保留。`)) return;
+  try {
+    await api(`/api/routes/${o}/${d}`, null, { method: "DELETE" });
+    $("routeDlg").close();
+    toast(`已删除 ${o} ⇄ ${d}`);
+    await reloadRoutes(state.route && state.route.key !== `${o}-${d}` ? state.route.key : null);
+  } catch (err) {
+    $("routeError").textContent = err.message;
+    $("routeError").hidden = false;
+  }
+}
+
 /* ---------------- 读取 ---------------- */
 async function loadStatus() {
   try {
@@ -970,7 +1047,7 @@ function openWechat() {
   ["wxSpt", "wxPlus", "wxApp", "wxUid"].forEach((id) => ($(id).value = ""));
   $("wechatError").hidden = true;
   $("wechatOff").hidden = !w.provider;
-  setWxProvider(w.provider || "wxpusher_spt");
+  setWxProvider(w.provider || "pushplus");
   $("wechatDlg").showModal();
 }
 async function saveWechat(e) {
@@ -1049,6 +1126,9 @@ async function boot() {
   $("manualForm").addEventListener("submit", saveManual);
   $("manualCancel").addEventListener("click", () => $("manualDlg").close());
   $("heroWatch").addEventListener("click", () => openWatch());
+  $("routeForm").addEventListener("submit", saveRoute);
+  $("routeCancel").addEventListener("click", () => $("routeDlg").close());
+  $("rOrigin").addEventListener("change", () => { $("rCodeField").hidden = $("rOrigin").value !== "other"; });
   $("adWatch").addEventListener("click", () => state.advice && openWatch(null, state.advice.target));
   $("changeTrip").addEventListener("click", () => showView("flex"));
   $("editTrip").addEventListener("click", openTrip);
@@ -1105,8 +1185,16 @@ async function boot() {
     toast("config.yaml 里还没有配置航线", true);
     return;
   }
-  sel.innerHTML = state.routes.map((r, i) => `<option value="${i}">${esc(r.origin)} ⇄ ${esc(r.dest)} · ${esc(r.name)}</option>`).join("");
-  sel.addEventListener("change", () => { setRoute(state.routes[+sel.value]); loadAll(); });
+  fillRouteSel(0);
+  sel.addEventListener("change", () => {
+    if (sel.value === "add") {   // 最后一项是"添加出发地"，不是航线
+      sel.value = String(state.routes.indexOf(state.route));
+      openRoutes();
+      return;
+    }
+    setRoute(state.routes[+sel.value]);
+    loadAll();
+  });
   setRoute(state.routes[0]);
   await loadAll();
   const latest = state.status && state.status.runs.find((r) => r.status !== "running");
