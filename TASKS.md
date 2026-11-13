@@ -29,11 +29,11 @@
 - [x] API 测试（TestClient + 临时数据库）
 
 ## M4 前端 `feat/m4-web`
-- [ ] 从原型拆出 `web/`（index.html、styles.css、app.js），ECharts 本地化
-- [ ] 接入真实 API：总览 KPI、走势、低价日历、弹性行程热力图与 Top 列表
-- [ ] 航线 / 窗口 / 天数可调；选中组合联动走势
-- [ ] 空数据、抓取失败、加载中状态；深浅色；手机布局
-- [ ] 手动核价录入、立即抓取按钮
+- [x] 从原型拆出 `web/`（index.html、styles.css、app.js），ECharts 本地化
+- [x] 接入真实 API：总览 KPI、走势、低价日历、弹性行程热力图与 Top 列表
+- [x] 航线 / 窗口 / 天数可调；选中组合联动走势
+- [x] 空数据、抓取失败、加载中状态；深浅色；手机布局
+- [x] 手动核价录入、立即抓取按钮
 
 ## M5 微信提醒 `feat/m5-alerts`
 - [ ] 推送通道：WxPusher、PushPlus、控制台（测试用）

@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>航价记</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6'/%3E%3Cpath fill='white' d='M20 15v-1.6l-6.6-4.1V5.2a1.4 1.4 0 0 0-2.8 0v4.1L4 13.4V15l6.6-2v4.5l-1.7 1.2V20l3.1-.9 3.1.9v-1.3l-1.7-1.2V13z'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+<script src="vendor/echarts.min.js"></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div class="ambient" aria-hidden="true"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div></div>
+
+<header class="bar">
+  <div class="bar-inner glass">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15.5v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V8.5l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2z"/></svg>
+      </span>
+      航价记
+    </div>
+    <label class="route" title="切换航线">
+      <span class="visually-hidden">航线</span>
+      <select id="routeSel" class="route-select" aria-label="航线"></select>
+    </label>
+    <nav class="tabs" aria-label="页面分区">
+      <a href="#overview" class="on">总览</a>
+      <a href="#flex">弹性行程</a>
+      <a href="#alerts">提醒</a>
+      <a href="#runs">抓取</a>
+    </nav>
+    <div class="status"><span class="dot idle" id="statusDot"></span><span id="statusText">读取中…</span></div>
+    <button class="btn" id="collectBtn" type="button">立即抓取</button>
+    <button class="icon-btn" id="themeBtn" type="button" aria-label="切换深色/浅色">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+  <div class="empty glass" id="empty" hidden>
+    <div>
+      <h3>还没有价格数据</h3>
+      <p>点“立即抓取”记录第一份价格。之后用 Windows 任务计划每天自动抓取，走势会越来越完整。</p>
+    </div>
+    <button class="btn primary" id="emptyCollect" type="button">立即抓取</button>
+  </div>
+
+  <div class="section-head" id="overview">
+    <h2>价格总览</h2>
+    <p id="ovSub">—</p>
+  </div>
+
+  <section class="kpis" aria-label="关键指标">
+    <div class="kpi glass">
+      <div class="label">所选组合往返估价</div>
+      <div class="value num" id="kNow">—</div>
+      <div class="sub"><span id="kNowDelta" class="delta" hidden></span> <span id="kNowTrip"></span></div>
+    </div>
+    <div class="kpi glass">
+      <div class="label" id="kPctLabel">价格位置 · 近 14 天</div>
+      <div class="value num" id="kPct">—</div>
+      <div class="range" aria-hidden="true"><i id="kPctMark" style="left:50%"></i></div>
+      <div class="range-ends num"><span id="kMin">—</span><span id="kMax">—</span></div>
+    </div>
+    <div class="kpi glass">
+      <div class="label" id="kOutLabel">窗口内去程最低</div>
+      <div class="value num" id="kOut">—</div>
+      <div class="sub" id="kOutD">—</div>
+    </div>
+    <div class="kpi glass">
+      <div class="label" id="kRetLabel">对应回程最低</div>
+      <div class="value num" id="kRet">—</div>
+      <div class="sub" id="kRetD">—</div>
+    </div>
+  </section>
+
+  <section class="grid-2">
+    <div class="card glass">
+      <div class="card-head">
+        <h3>价格走势</h3>
+        <div class="seg" role="group" aria-label="走势类型">
+          <button type="button" data-mode="combo" aria-pressed="true">所选组合</button>
+          <button type="button" data-mode="low" aria-pressed="false">窗口最低</button>
+        </div>
+        <div class="seg" role="group" aria-label="时间范围">
+          <button type="button" data-days="7" aria-pressed="false">7天</button>
+          <button type="button" data-days="14" aria-pressed="true">14天</button>
+          <button type="button" data-days="30" aria-pressed="false">30天</button>
+          <button type="button" data-days="0" aria-pressed="false">全部</button>
+        </div>
+      </div>
+      <p class="hint" id="trendHint">—</p>
+      <div class="chart" id="trend" role="img" aria-label="价格走势折线图"></div>
+    </div>
+    <div class="card glass">
+      <div class="card-head">
+        <h3>低价日历</h3>
+        <div class="seg" role="group" aria-label="日历方向">
+          <button type="button" data-cal="out" aria-pressed="true">去程</button>
+          <button type="button" data-cal="ret" aria-pressed="false">回程</button>
+        </div>
+      </div>
+      <div class="cal-nav">
+        <button class="icon-btn" id="calPrev" type="button" aria-label="上个月">‹</button>
+        <span id="calLabel" class="num">—</span>
+        <button class="icon-btn" id="calNext" type="button" aria-label="下个月">›</button>
+      </div>
+      <div class="cal" id="cal"></div>
+      <div class="legend"><span class="l0">当月最便宜 20%</span><span class="l4">当月最贵 20%</span><span>单程 · 含税 · 点日期去携程</span></div>
+    </div>
+  </section>
+
+  <div class="section-head" id="flex">
+    <h2>弹性行程</h2>
+    <p>在出发窗口和游玩天数范围内，找最便宜的去回组合</p>
+  </div>
+
+  <section class="planner">
+    <form class="controls glass" id="flexForm" onsubmit="return false">
+      <div class="field">
+        <label for="fStart">出发窗口</label>
+        <div class="row">
+          <input id="fStart" type="date" required>
+          <span class="tilde">~</span>
+          <input id="fEnd" type="date" required>
+        </div>
+      </div>
+      <div class="field">
+        <label for="fMin">游玩天数</label>
+        <div class="row">
+          <input id="fMin" type="number" min="1" max="120" required>
+          <span class="tilde">~</span>
+          <input id="fMax" type="number" min="1" max="120" required>
+          <span class="tilde">天</span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="fIdeal">理想天数</label>
+        <div class="row"><input id="fIdeal" type="number" min="1" max="120"><span class="tilde">天</span></div>
+      </div>
+      <p class="form-error" id="flexError" hidden></p>
+      <div class="best" id="bestCard">
+        <div class="k">窗口内最低组合</div>
+        <div class="v num" id="bestV">—</div>
+        <div class="trip" id="bestTrip">—</div>
+        <div class="actions">
+          <a id="bestLink" href="#" target="_blank" rel="noopener">去携程核价 ↗</a>
+          <button type="button" id="manualBtn">录入实价</button>
+        </div>
+      </div>
+      <ul class="tips" id="tips"></ul>
+    </form>
+    <div class="card glass">
+      <div class="card-head">
+        <h3>出发日 × 游玩天数</h3>
+        <span class="hint" id="heatHint">点格子查看该组合走势</span>
+      </div>
+      <div class="heat-wrap"><div class="heat" id="heat" role="img" aria-label="出发日期与游玩天数的价格热力图"></div></div>
+      <div class="table-wrap">
+        <table class="toplist" aria-label="最便宜的组合">
+          <thead><tr><th>出发</th><th>返回</th><th>天数</th><th class="price">去程</th><th class="price">回程</th><th class="price">估价</th><th class="price">往返实价</th></tr></thead>
+          <tbody id="top"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-head" id="alerts">
+    <h2>提醒</h2>
+    <p id="alertsSub">满足任意一条就推送到微信</p>
+  </div>
+  <section class="grid-2" id="alertsSection">
+    <div class="card glass">
+      <div class="card-head"><h3>提醒规则</h3><span class="hint">在 config.yaml 中修改</span></div>
+      <div class="rules" id="rules"><p class="hint">读取中…</p></div>
+    </div>
+    <div class="card glass">
+      <div class="card-head"><h3>最近推送</h3><span class="hint" id="channelHint"></span></div>
+      <div class="table-wrap">
+        <table class="toplist" aria-label="最近推送">
+          <thead><tr><th>时间</th><th>规则</th><th>内容</th><th>状态</th></tr></thead>
+          <tbody id="alertLog"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-head" id="runs">
+    <h2>抓取记录</h2>
+    <p id="runsSub">—</p>
+  </div>
+  <section class="card glass">
+    <div class="table-wrap">
+      <table class="toplist" aria-label="抓取记录">
+        <thead><tr><th>时间</th><th>状态</th><th class="price">报价数</th><th>说明</th></tr></thead>
+        <tbody id="runsBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer>
+  价格来自携程低价日历（经济舱、1 位成人、含税、人民币）。往返估价 = 去程单程最低价 + 回程单程最低价，实际往返票可能更便宜或更贵，下单前请点“去携程核价”确认。仅供个人参考。
+</footer>
+
+<dialog id="manualDlg" class="dlg">
+  <form method="dialog" id="manualForm">
+    <h3>录入真实往返价</h3>
+    <p class="hint">在携程或航司官网查到的实际往返价，会显示在走势图上作对照。</p>
+    <div class="field"><label for="mDepart">出发</label><input id="mDepart" type="date" required></div>
+    <div class="field"><label for="mReturn">返回</label><input id="mReturn" type="date" required></div>
+    <div class="field"><label for="mPrice">价格（人民币，含税）</label><input id="mPrice" type="number" min="1" step="1" required></div>
+    <div class="field"><label for="mNote">备注</label><input id="mNote" type="text" maxlength="200" placeholder="如：携程往返 东航 1 次中转"></div>
+    <p class="form-error" id="manualError" hidden></p>
+    <div class="dlg-actions">
+      <button class="btn" value="cancel" type="button" id="manualCancel">取消</button>
+      <button class="btn primary" type="submit" id="manualSave">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

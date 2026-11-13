@@ -184,6 +184,8 @@ def create_app(
         di = {x: i for i, x in enumerate(dates)}
         si = {x: i for i, x in enumerate(stays)}
         cells = [[di[t.depart_date], si[t.days], t.best_price] for t in res.trips]
+        lo_out = min(res.trips, key=lambda t: (t.out_price, t.depart_date), default=None)
+        lo_ret = min(res.trips, key=lambda t: (t.ret_price, t.return_date), default=None)
         hist = []
         if with_history:
             hist = [
@@ -210,6 +212,14 @@ def create_app(
             "ideal_saving": res.ideal_saving,
             "top": [trip_json(t, o, d) for t in res.top(top)],
             "by_days": [{"days": s, **trip_json(t, o, d)} for s, t in sorted(res.by_days.items())],
+            "leg_lows": {
+                "out": {"date": lo_out.depart_date.isoformat(), "price": lo_out.out_price}
+                if lo_out
+                else None,
+                "ret": {"date": lo_ret.return_date.isoformat(), "price": lo_ret.ret_price}
+                if lo_ret
+                else None,
+            },
             "suggestions": suggestions(res),
             "low_history": hist,
             "low_stats": stats_json(compute([(h["t"], h["price"]) for h in hist])),
@@ -300,6 +310,13 @@ def create_app(
             "n_quotes": res.n_quotes,
             "errors": res.errors,
         }
+
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):  # type: ignore[no-untyped-def]
+        resp = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            resp.headers.setdefault("Cache-Control", "no-cache")
+        return resp
 
     if web_dir and web_dir.is_dir():
         app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
