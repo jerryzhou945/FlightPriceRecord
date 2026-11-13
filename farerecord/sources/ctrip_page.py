@@ -115,7 +115,10 @@ def parse_snapshot(
 ) -> PageQuote:
     """从读页面脚本的结果里取这个行程的最低往返价。同程的结果页（ly_page）也用它。"""
     if is_blocked(snap):
-        raise PageBlocked(f"{site}要求登录或验证，已暂停自动核价")
+        url = str(snap.get("url") or "")
+        if "passport." in url or "/login" in url:
+            raise PageBlocked(f"{site}需要重新登录（被带到了登录页），已暂停自动核价")
+        raise PageBlocked(f"{site}出现了验证（验证码或滑块），已暂停自动核价")
     if (marker or _dates_marker(depart, ret)) not in str(snap.get("url") or ""):
         raise PageEmpty(f"{site}没有按这两个日期显示结果")
     items = [

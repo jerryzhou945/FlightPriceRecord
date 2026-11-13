@@ -73,7 +73,7 @@ def test_read_roundtrip_parses_page() -> None:
 
 def test_read_roundtrip_login_and_empty() -> None:
     login = page(url="https://passport.ly.com/?pageurl=xxx", items=[], tabs=[])
-    with pytest.raises(PageBlocked, match="同程要求登录"):
+    with pytest.raises(PageBlocked, match="同程需要重新登录"):
         ly_page.read_roundtrip(reader_of(login), "CHI", "SHA", D, R)
     with pytest.raises(PageEmpty, match="同程"):
         ly_page.read_roundtrip(reader_of(page(items=[], tabs=[])), "CHI", "SHA", D, R)
@@ -169,3 +169,9 @@ def test_ly_api(tmp_path) -> None:
     conn.close()
     assert client.delete("/api/ly").status_code == 204
     assert client.get("/api/status").json()["ly_enabled"] is False
+
+
+def test_blocked_message_tells_login_from_captcha() -> None:
+    captcha = page(items=[], tabs=[], captcha=True)
+    with pytest.raises(PageBlocked, match="同程出现了验证"):
+        ly_page.read_roundtrip(reader_of(captcha), "CHI", "SHA", D, R)
