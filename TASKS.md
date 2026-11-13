@@ -23,10 +23,10 @@
 - [x] CLI `farerecord flex`（终端输出最便宜组合）
 
 ## M3 API `feat/m3-api`
-- [ ] FastAPI 应用与静态文件挂载，CLI `farerecord serve`
-- [ ] `/api/routes`、`/api/calendar`、`/api/flex`、`/api/history`、`/api/status`
-- [ ] `/api/manual-quote`、`/api/collect`
-- [ ] API 测试（TestClient + 临时数据库）
+- [x] FastAPI 应用与静态文件挂载，CLI `farerecord serve`
+- [x] `/api/routes`、`/api/calendar`、`/api/flex`、`/api/history`、`/api/status`
+- [x] `/api/manual-quote`、`/api/collect`
+- [x] API 测试（TestClient + 临时数据库）
 
 ## M4 前端 `feat/m4-web`
 - [ ] 从原型拆出 `web/`（index.html、styles.css、app.js），ECharts 本地化
