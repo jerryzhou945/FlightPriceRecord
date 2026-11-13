@@ -73,10 +73,18 @@ def record(conn: sqlite3.Connection, run_id: int, origin: str, dest: str) -> flo
 def _from_manual(
     conn: sqlite3.Connection, origin: str, dest: str, now: datetime
 ) -> Calibration | None:
+    since = (now - MANUAL_VALID).isoformat()
+    manual = repo.recent_manual_quotes(conn, origin, dest, since)
+    # 固定行程从携程页面读到的实价不参与校准：它只代表那一个日期组合，
+    # 那两天的单程价一跳，所有组合的预估都会跟着晃（实测比例从 0.84 掉到 0.78）
     ratios = []
-    for q in repo.recent_manual_quotes(conn, origin, dest, (now - MANUAL_VALID).isoformat()):
-        depart, ret = date.fromisoformat(q["depart_date"]), date.fromisoformat(q["return_date"])
-        series = repo.combo_series(conn, origin, dest, depart, ret)
+    cache: dict[tuple[str, str], list] = {}
+    for q in manual:
+        key = (q["depart_date"], q["return_date"])
+        if key not in cache:
+            depart, ret = date.fromisoformat(key[0]), date.fromisoformat(key[1])
+            cache[key] = repo.combo_series(conn, origin, dest, depart, ret)
+        series = cache[key]
         if not series:
             continue
         # 用核价那一刻（或之后最近一次抓取）的单程价来比

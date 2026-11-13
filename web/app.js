@@ -78,6 +78,7 @@ const state = {
   routes: [], route: null, flex: null, history: null, sel: null, alerts: null,
   mode: "combo", days: 7, calDir: "out", calMonth: null, status: null,
   view: "overview", lastRunId: null, lastAlertId: null,
+  picked: false,  // 用户这次打开后手动挑过别的组合；否则首页显示固定的行程
 };
 let trendChart, heatChart;
 
@@ -107,6 +108,25 @@ function renderBadge() {
   b.textContent = state.unseenAlerts || "";
 }
 
+/* ---------------- 固定行程 ---------------- */
+const tripOf = (dep, ret) => ({
+  depart: dep, return: ret, days: Math.round((toMs(ret) - toMs(dep)) / DAY), best_price: null,
+  ctrip_url: ctripUrl(state.route.origin, state.route.dest, dep, ret),
+});
+const pinnedTrip = () => (state.route && state.route.pinned ? tripOf(state.route.pinned.depart, state.route.pinned.return) : null);
+const sameTrip = (a, b) => !!a && !!b && a.depart === b.depart && a.return === b.return;
+const isPinnedSel = () => sameTrip(state.sel, state.route && state.route.pinned);
+// 首页大数字用哪个价格：携程往返订票页读到的真实价优先，没有就用推算的预估
+function realOf(h) {
+  return h && h.real && h.real.series.length ? h.real : null;
+}
+function currentPrice() {
+  const h = state.history, real = realOf(h);
+  if (real) return real.stats.current;
+  if (h && h.stats) return h.stats.current;
+  return state.sel ? state.sel.best_price ?? state.sel.price ?? null : null;
+}
+
 /* ---------------- 航线与表单 ---------------- */
 function defaultWindow() {
   const now = new Date();
@@ -125,6 +145,7 @@ function setRoute(route) {
   $("fIdeal").value = f.ideal_days || "";
   state.calMonth = $("fStart").value.slice(0, 7);
   state.sel = null;
+  state.picked = false;
 }
 function readForm() {
   let start = $("fStart").value, end = $("fEnd").value;
@@ -157,8 +178,10 @@ async function loadFlex() {
   try {
     const f = await api("/api/flex", { origin: state.route.origin, dest: state.route.dest, ...q, top: 8 });
     state.flex = f;
-    const keep = state.sel && f.cells.length && f.top.concat(f.by_days).some((t) => t.depart === state.sel.depart && t.return === state.sel.return);
-    if (!keep) state.sel = f.best;
+    const pin = pinnedTrip();
+    const known = (t) => f.top.concat(f.by_days).find((x) => sameTrip(x, t));
+    if (pin && !state.picked) state.sel = known(pin) || pin;   // 固定的行程不受弹性窗口限制
+    else if (!(state.sel && (state.picked || known(state.sel)))) state.sel = f.best || pin;
     renderPlanner();
     await loadHistory();
   } catch (e) {
@@ -234,6 +257,8 @@ async function poll() {
   const id = latest ? latest.id : null;
   if (state.lastRunId !== null && id !== state.lastRunId) {
     await Promise.all([loadFlex(), loadCal(), loadAlerts(true)]);
+  } else if (isPinnedSel()) {
+    await loadHistory();   // 携程实价是单独读的，不跟着抓取走
   }
   state.lastRunId = id;
 }
@@ -289,7 +314,8 @@ function renderStatus() {
 }
 
 function renderHero() {
-  const t = state.sel, h = state.history, s = h && h.stats;
+  const t = state.sel, h = state.history;
+  let s = h && h.stats;
   const delta = $("kNowDelta"), day = $("kDayDelta");
   const acts = ["heroLink", "heroWatch", "manualBtn"];
   if (!t) {
@@ -303,16 +329,24 @@ function renderHero() {
   acts.forEach((id) => $(id).removeAttribute("aria-disabled"));
   const cal = (h && h.calibration) || (state.flex && state.flex.calibration) || { ratio: 1, source: "none" };
   const calibrated = cal.ratio < 1;
-  const cur = s ? s.current : t.best_price;
+  const real = realOf(h);
+  const est = s ? s.current : t.best_price;   // 按单程推算的往返预估
+  const cur = real ? real.stats.current : est;
+  if (real) s = real.stats;                   // 高低点、涨跌都按真实价格算
   const legs = h && h.legs;
   const [o, d] = [state.route.origin, state.route.dest];
-  $("priceLabel").textContent = calibrated ? "往返预估" : "两张单程合计";
+  $("priceLabel").textContent = real ? "携程往返实价" : calibrated ? "往返预估" : "两张单程合计";
   $("kNow").textContent = yuan(cur);
   $("ovSub").textContent = `${md(t.depart)} ${wd(t.depart)} → ${md(t.return)} ${wd(t.return)} · ${t.days} 天`;
   $("heroLink").href = t.ctrip_url || ctripUrl(o, d, t.depart, t.return);
+  const pin = pinnedTrip(), onPin = isPinnedSel();
+  $("pinChip").hidden = !onPin;
+  $("pinThis").hidden = onPin;
+  $("backPinned").hidden = !pin || onPin;
+  if (pin && !onPin) $("backPinned").textContent = `回到固定的 ${md(pin.depart)}→${md(pin.return)}`;
 
-  // 涨跌：和上一次抓取比、和 24 小时前比
-  const series = h ? h.series : [];
+  // 涨跌：和上一次比、和 24 小时前比
+  const series = real ? real.series : h ? h.series : [];
   const prev = series.length > 1 ? series[series.length - 2][1] : null;
   const setDelta = (el, diff, suffix) => {
     el.hidden = diff == null || diff === 0;
@@ -324,7 +358,19 @@ function renderHero() {
   setDelta(day, s ? s.change_24h : null, "/ 24h");
 
   const notes = [];
-  if (calibrated && legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
+  const rinfo = h && h.real, check = rinfo && rinfo.check;
+  if (real) {
+    const at = real.series[real.series.length - 1][0];
+    const who = real.airline ? `${airBadge(real.airline)} ` : "";
+    notes.push(`<span class="live${real.fresh ? "" : " stale"}"></span>${who}${relTime(at)}读自携程往返订票页`);
+    if (legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
+  } else if (calibrated && legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
+  if (rinfo && rinfo.pinned) {
+    const monitor = state.status && state.status.real_monitor;
+    if (check && !["ok", "running"].includes(check.status)) notes.push(`<span class="warn">${esc(check.message || "携程往返价没有读到")}，可点“去携程核价”自己看</span>`);
+    else if (!real) notes.push(monitor ? "正在读取携程往返实价…" : "携程往返实价由桌面端窗口或系统定时任务读取");
+    else if (!real.fresh) notes.push(`<span class="warn">实价已经不新了，桌面端开着时会自动更新</span>`);
+  }
   const lastManual = h && h.manual.length ? h.manual[h.manual.length - 1] : null;
   if (lastManual) notes.push(`<b>你核过的实价 ${yuan(lastManual.price)}</b>（${relTime(lastManual.observed_at)}）`);
   $("priceNote").innerHTML = notes.join(" · ");
@@ -351,12 +397,18 @@ function renderHero() {
   $("legOut").innerHTML = leg("去程单程", t.depart, o, d, legs ? legs.out : t.out, outA);
   $("legRet").innerHTML = leg("回程单程", t.return, d, o, legs ? legs.ret : t.ret, retA);
   const sum = legs ? legs.sum : t.oneway_sum;
-  $("legTotal").innerHTML = calibrated
+  $("legEq").textContent = real ? "→" : "＝";
+  $("legTotal").innerHTML = real
+    ? `<div class="k">携程往返实价</div><div class="v num accent">${yuan(cur)}</div>
+       <div class="s">${sum != null ? (sum - cur >= 0 ? `比分开买便宜 ${yuan(sum - cur)}` : `比分开买贵 ${yuan(cur - sum)}`) : "一张往返票的含税价"}</div>`
+    : calibrated
     ? `<div class="k">往返预估</div><div class="v num accent">${yuan(cur)}</div>
        <div class="s">两张单程 ${yuan(sum)} × ${Math.round(cal.ratio * 100)}%</div>`
     : `<div class="k">两张单程合计</div><div class="v num accent">${yuan(sum)}</div><div class="s">分开买两张票的价格</div>`;
   const pct = Math.round(cal.ratio * 100);
-  $("calExplain").innerHTML = cal.source === "manual"
+  $("calExplain").innerHTML = real
+    ? `大数字是携程往返订票页上这两个日期的<b>最低往返含税价</b>（1 位成人、经济舱），和你自己打开携程看到的是同一个数。桌面端开着或系统定时任务运行时会定时重新读取。左边两张单程是分开买的价格，留作对照。下单前请以携程结算页为准。`
+    : cal.source === "manual"
     ? `往返预估是按你最近核过的真实往返价校准的：这条航线的往返票约为两张单程之和的 <b>${pct}%</b>。实际价格以携程为准。`
     : cal.source === "cache"
     ? `携程的公开数据里拿不到长途行程的真实往返价，这里是推算的：对比携程近期的真实往返票（停留 10–14 天）和同一天的两张单程，这条航线的往返票约为单程之和的 <b>${pct}%</b>。实际价格以携程为准——核过价后点“录入实价”，预估会改按你的实价校准。`
@@ -381,7 +433,7 @@ function renderPlanner() {
   $("tips").innerHTML = f.suggestions.map((s) => `<li>${esc(s)}</li>`).join("");
   const ratioNote = f.calibration && f.calibration.ratio < 1 ? `往返预估 = 两张单程 × ${Math.round(f.calibration.ratio * 100)}%` : "价格 = 两张单程合计";
   $("heatHint").textContent = f.observed_at
-    ? `数据 ${fmtTime(f.observed_at)} · ${ratioNote} · 点格子选中该组合`
+    ? `数据 ${fmtTime(f.observed_at)} · ${ratioNote} · 点格子去携程看该组合`
     : "还没有数据";
   if (heatChart) renderHeat();
   renderTop();
@@ -400,7 +452,7 @@ function renderHeat() {
       ...tooltipStyle(),
       formatter: (p) => {
         const dep = dates[p.value[0]], s = stays[p.value[1]], ret = addDays(dep, s);
-        return `${md(dep)} ${wd(dep)} → ${md(ret)} ${wd(ret)}<br>${s} 天 · <b>${yuan(p.value[2])}</b>`;
+        return `${md(dep)} ${wd(dep)} → ${md(ret)} ${wd(ret)}<br>${s} 天 · <b>${yuan(p.value[2])}</b><br><span style="opacity:.6">点击去携程查看</span>`;
       },
     },
     xAxis: { type: "category", data: dates.map(md), axisTick: { show: false }, axisLine: { show: false },
@@ -418,9 +470,9 @@ function renderHeat() {
   }, true);
   heatChart.off("click");
   heatChart.on("click", (p) => {
+    // 点格子直接去携程看这个去回组合的往返订票页（桌面端会用系统浏览器打开）
     const dep = dates[p.value[0]], s = stays[p.value[1]], ret = addDays(dep, s);
-    const known = f.top.concat(f.by_days).find((t) => t.depart === dep && t.return === ret);
-    select(known || { depart: dep, return: ret, days: s, best_price: p.value[2], ctrip_url: ctripUrl(o, d, dep, ret) });
+    window.open(ctripUrl(o, d, dep, ret), "_blank", "noopener");
   });
 }
 
@@ -457,21 +509,28 @@ function renderTop() {
 function renderTrend() {
   if (!trendChart) return;
   const accent = tok("--accent"), down = tok("--down");
-  let pts = [], hint, manual = [];
+  let pts = [], hint, manual = [], mainName = "往返预估";
   if (state.mode === "combo") {
-    const h = state.history;
+    const h = state.history, real = realOf(h);
     pts = h ? h.series.map(([t, p]) => [new Date(t).getTime(), p]) : [];
     manual = h ? h.manual.map((m) => [new Date(m.observed_at).getTime(), m.price, m.note || ""]) : [];
     hint = state.sel ? "每次抓取记录一个点；菱形是你录入的真实往返价" : "还没有选中组合";
+    if (real) {
+      pts = real.series.map(([t, p, a]) => [new Date(t).getTime(), p, a || ""]);
+      mainName = "携程往返实价";
+      hint = "每个点是一次从携程往返订票页读到的真实往返价（等页面搜索完成后读取）";
+    }
   } else {
     const lh = state.flex ? state.flex.low_history : [];
     pts = lh.map((p) => [new Date(p.t).getTime(), p.price, p.depart, p.return]);
     hint = "每次抓取时，弹性窗口内最便宜组合的价格";
+    mainName = "窗口最低";
   }
   if (state.days && pts.length) {
     const end = pts[pts.length - 1][0];
-    pts = pts.filter((p) => p[0] >= end - state.days * DAY);
-    manual = manual.filter((p) => p[0] >= end - state.days * DAY);
+    const recent = (p) => p[0] >= end - state.days * DAY;
+    pts = pts.filter(recent);
+    manual = manual.filter(recent);
   }
   if (pts.length < 2) hint += " · 数据还少，多抓几次就能看到走势";
   $("trendHint").textContent = hint;
@@ -479,7 +538,7 @@ function renderTrend() {
   const hourly = span <= 2 * DAY;
   const target = state.route && state.route.target_price;
   const series = [{
-    name: state.mode === "combo" ? "往返预估" : "窗口最低", type: "line", data: pts, showSymbol: pts.length < 3,
+    name: mainName, type: "line", data: pts, showSymbol: pts.length < 3,
     symbolSize: 6, smooth: 0.12, lineStyle: { width: 2.2, color: accent }, itemStyle: { color: accent },
     areaStyle: { opacity: 0.28, color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: accent }, { offset: 1, color: "rgba(0,0,0,0)" }]) },
     markPoint: pts.length > 1 ? {
@@ -489,7 +548,7 @@ function renderTrend() {
     } : undefined,
     markLine: target ? {
       symbol: "none", silent: true, lineStyle: { type: "dashed", color: down, opacity: 0.8 },
-      label: { color: down, position: "insideEndTop", formatter: "目标 " + yuan(target) }, data: [{ yAxis: target }],
+      label: { color: down, position: "insideStartTop", formatter: "目标 " + yuan(target) }, data: [{ yAxis: target }],
     } : undefined,
   }];
   if (manual.length) {
@@ -499,15 +558,15 @@ function renderTrend() {
   trendChart.setOption({
     animationDuration: 400,
     textStyle: baseText(),
-    grid: { left: 58, right: 14, top: 22, bottom: 28 },
-    legend: manual.length ? { right: 0, top: 0, textStyle: { color: tok("--muted") }, itemWidth: 12, itemHeight: 8 } : undefined,
+    grid: { left: 58, right: 52, top: 30, bottom: 28 },
+    legend: series.length > 1 ? { right: 0, top: 0, textStyle: { color: tok("--muted") }, itemWidth: 12, itemHeight: 8 } : undefined,
     tooltip: {
       trigger: "axis", ...tooltipStyle(), axisPointer: { lineStyle: { color: tok("--faint") } },
       formatter: (ps) => {
         const head = fmtTime(new Date(ps[0].value[0]).toISOString());
         const rows = ps.map((x) => {
           const extra = x.seriesName === "窗口最低" && x.value[2] ? ` <span style="opacity:.6">${md(x.value[2])}→${md(x.value[3])}</span>` : "";
-          const note = x.seriesName === "手动核价" && x.value[2] ? ` <span style="opacity:.6">${esc(x.value[2])}</span>` : "";
+          const note = ["手动核价", "携程往返实价"].includes(x.seriesName) && x.value[2] ? ` <span style="opacity:.6">${esc(x.value[2])}</span>` : "";
           return `${x.marker}${x.seriesName} <b>${yuan(x.value[1])}</b>${extra}${note}`;
         });
         return [head, ...rows].join("<br>");
@@ -616,6 +675,7 @@ function renderAlerts(a) {
 /* ---------------- 交互 ---------------- */
 function select(t) {
   state.sel = t;
+  state.picked = !isPinnedSel();
   renderTop();
   loadHistory();
   if (state.calDir) loadCal();
@@ -640,12 +700,84 @@ async function collectNow() {
     state.lastRunId = r.run_id;
     await loadStatus();
     await Promise.all([loadFlex(), loadCal(), loadAlerts(true)]);
+    if (state.route.pinned) refreshReal();
   } catch (e) {
     toast(e.message, true);
     loadStatus();
   } finally {
     btns.forEach((b) => { b.disabled = false; b.textContent = "立即抓取"; });
   }
+}
+
+// 让桌面端马上去携程核一次价，然后等结果出来（一般 10 秒左右）
+let realTimer;
+async function refreshReal() {
+  if (!(state.status && state.status.real_monitor)) return;
+  try { await api("/api/real-check", null, { method: "POST" }); } catch (e) { return; }
+  watchReal();
+}
+function watchReal(tries = 15) {
+  clearInterval(realTimer);
+  const before = state.history && state.history.real && state.history.real.check ? state.history.real.check.at : null;
+  realTimer = setInterval(async () => {
+    if (!isPinnedSel()) { clearInterval(realTimer); return; }
+    await loadHistory();
+    const c = state.history && state.history.real && state.history.real.check;
+    if (--tries <= 0 || (c && c.status !== "running" && c.at !== before)) clearInterval(realTimer);
+  }, 4000);
+}
+
+function openTrip() {
+  const t = state.sel || pinnedTrip() || (state.flex && state.flex.best);
+  if (t) { $("tDepart").value = t.depart; $("tReturn").value = t.return; }
+  $("tPin").checked = true;
+  $("tripUnpin").hidden = !state.route.pinned;
+  $("tripError").hidden = true;
+  $("tripDlg").showModal();
+}
+async function setPinned(dep, ret) {
+  const r = await sendJson("/api/pinned", "PUT", { origin: state.route.origin, dest: state.route.dest, depart: dep, ret });
+  state.route.pinned = r.pinned;
+  return r.pinned;
+}
+async function showTrip(dep, ret, pin) {
+  if (pin) await setPinned(dep, ret);
+  state.sel = tripOf(dep, ret);
+  state.picked = !isPinnedSel();
+  state.mode = "combo";
+  document.querySelectorAll("[data-mode]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.mode === "combo")));
+  if (state.flex) renderTop();
+  await loadHistory();
+  loadCal();
+  if (pin) {
+    toast(state.status && state.status.real_monitor ? "已固定，正在读取携程往返实价…" : "已固定这个行程");
+    watchReal();
+  }
+}
+async function saveTrip(e) {
+  e.preventDefault();
+  const dep = $("tDepart").value, ret = $("tReturn").value;
+  if (!(dep && ret && ret > dep)) {
+    $("tripError").textContent = "返回日期必须晚于出发日期";
+    $("tripError").hidden = false;
+    return;
+  }
+  try {
+    await showTrip(dep, ret, $("tPin").checked);
+    $("tripDlg").close();
+  } catch (err) {
+    $("tripError").textContent = err.message;
+    $("tripError").hidden = false;
+  }
+}
+async function unpinTrip() {
+  try {
+    await setPinned(null, null);
+    toast("已取消固定，首页回到弹性窗口里最便宜的组合");
+  } catch (err) { toast(err.message, true); }
+  $("tripDlg").close();
+  state.picked = false;
+  loadFlex();
 }
 
 function openManual() {
@@ -688,7 +820,7 @@ async function saveManual(e) {
 function openWatch(trip) {
   const t = trip || state.sel || (state.flex && state.flex.best);
   if (!t) { toast("先抓取一次价格，再设置提醒", true); return; }
-  const cur = t === state.sel && state.history && state.history.stats ? state.history.stats.current : (t.best_price ?? t.price);
+  const cur = t === state.sel ? currentPrice() : (t.best_price ?? t.price);
   const existing = state.alerts && state.alerts.watches.find((w) => w.depart === t.depart && w.return === t.return && w.origin === state.route.origin && w.dest === state.route.dest);
   $("wDepart").value = t.depart;
   $("wReturn").value = t.return;
@@ -857,6 +989,17 @@ async function boot() {
   $("manualCancel").addEventListener("click", () => $("manualDlg").close());
   $("heroWatch").addEventListener("click", () => openWatch());
   $("changeTrip").addEventListener("click", () => showView("flex"));
+  $("editTrip").addEventListener("click", openTrip);
+  $("tripForm").addEventListener("submit", saveTrip);
+  $("tripCancel").addEventListener("click", () => $("tripDlg").close());
+  $("tripUnpin").addEventListener("click", unpinTrip);
+  $("pinThis").addEventListener("click", () => {
+    if (state.sel) showTrip(state.sel.depart, state.sel.return, true).catch((err) => toast(err.message, true));
+  });
+  $("backPinned").addEventListener("click", () => {
+    const p = pinnedTrip();
+    if (p) showTrip(p.depart, p.return, false);
+  });
   bindSeg("ovtab", (v) => {
     $("ovDetail").hidden = v !== "detail";
     $("ovCal").hidden = $("calTools").hidden = v !== "cal";

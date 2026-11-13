@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -95,6 +95,19 @@ _MIGRATIONS: dict[int, str] = {
     );
     CREATE INDEX ix_oneway_run ON oneway_quote(run_id);   -- 按抓取清理旧数据时用
     CREATE INDEX ix_rt_run ON rt_quote(run_id);
+    """,
+    6: """
+    CREATE TABLE real_quote (                  -- 从携程往返订票页上读到的真实往返含税价
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        origin      TEXT NOT NULL,
+        dest        TEXT NOT NULL,
+        depart_date TEXT NOT NULL,
+        return_date TEXT NOT NULL,
+        price       REAL NOT NULL,
+        airline     TEXT,                      -- 页面上最低价那一行的航司名，可为空
+        observed_at TEXT NOT NULL
+    );
+    CREATE INDEX ix_real_trip ON real_quote(origin, dest, depart_date, return_date, observed_at);
     """,
 }
 

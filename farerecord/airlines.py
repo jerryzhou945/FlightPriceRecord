@@ -195,6 +195,21 @@ def airline_json(quote: OnewayQuote | None) -> dict[str, Any] | None:
     }
 
 
+def airline_by_name(name: str | None) -> dict[str, Any] | None:
+    """携程页面上显示的是航司中文名：对上了就带色标，对不上只显示名字。"""
+    if not name:
+        return None
+    code = next((c for c, n in NAMES.items() if n == name or n in name or name in n), None)
+    return {
+        "code": code,
+        "name": name,
+        "short": SHORT.get(code, name) if code else name,
+        "color": COLORS.get(code, DEFAULT_COLOR) if code else DEFAULT_COLOR,
+        "exact": True,
+        "price": None,
+    }
+
+
 def airline_text(quote: OnewayQuote | None) -> str:
     """提醒消息里的航司说明；没有信息返回空字符串。"""
     if quote is None or not quote.airline:

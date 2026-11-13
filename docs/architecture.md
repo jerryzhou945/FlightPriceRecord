@@ -14,12 +14,12 @@
 |---|---|---|
 | 携程 H5 低价日历 `soa2/15380 FlightIntlAndInlandLowestPriceSearch`（单程） | ✅ 可用。一次请求返回某方向未来约 366 天每天的最低含税价 | **主数据源**：去程、回程各 1 次请求即可覆盖全部日期 |
 | 同一接口（往返模式） | ⚠️ 只返回缓存的短途组合（停留 ≤ 14 天），不包含长途组合；请求里的日期不影响结果，换 flag / searchType / calendarSelections 也拿不到长途（2026-11-11 复测） | 短途行程直接用真实往返价；同时用来校准长途组合的往返预估 |
-| 携程网页版往返列表 `flights.ctrip.com/online/list/...` | ❌ 无头浏览器被风控拦截（whaleguard block） | 不使用；只生成链接让用户手动核价 |
+| 携程网页版往返订票页 `flights.ctrip.com/online/list/round-...` | ⚠️ 无头浏览器被风控拦截（whaleguard block）；普通浏览器窗口（WebView2，不改任何指纹）能正常打开，页面上直接显示这两个日期的最低往返含税价（2026-11-11 实测 12/28→1/20：¥7,139 土耳其航空，约 8 秒加载完） | **固定行程的真实往返价**：只打开用户固定的那一个行程的页面，读页面上已显示的价格；不调用它背后的搜索接口（那需要签名）。要求登录或出现验证码时停止 |
 | 携程 H5 往返列表（Playwright） | ❌ 风控 wasm + "服务器发生异常" | 不使用 |
 
-原则：**不做反爬绕过、不登录账号、不用代理池**。默认每小时抓取，每条航线读取去程、回程和往返缓存。航司识别按需额外读取候选航司日历，每个方向默认最多 8 家。
+原则：**不做反爬绕过、不登录账号、不用代理池**。读往返订票页用的是和用户自己打开页面一样的浏览器窗口，页面在窗口不可见时不会加载，所以窗口放在屏幕外而不是隐藏。默认每小时抓取，每条航线读取去程、回程和往返缓存。航司识别按需额外读取候选航司日历，每个方向默认最多 8 家。
 
-因此往返价格采用**单程组合估价**：`去程单程最低价(出发日) + 回程单程最低价(返回日)`。界面上始终标注"估价"，并提供"去携程核价"链接和"手动录入真实往返价"的入口。短途组合如果在往返日历缓存里存在，就同时展示真实往返价。
+除了固定行程以外，往返价格采用**单程组合估价**：`去程单程最低价(出发日) + 回程单程最低价(返回日)`。界面上始终标注"估价"，并提供"去携程核价"链接和"手动录入真实往返价"的入口。短途组合如果在往返日历缓存里存在，就同时展示真实往返价。
 
 参考项目：
 - [davidwushi1145/flightAlert](https://github.com/davidwushi1145/flightAlert)：使用同一个 15380 日历接口，单航线 + 桌面 GUI，不可商用
@@ -73,8 +73,10 @@ FlightPriceRecord/
 │   ├── repository.py            # 数据读写（查询最新价、历史序列）
 │   ├── sources/
 │   │   ├── base.py              # PriceSource 接口
-│   │   └── ctrip_calendar.py    # 携程 15380 日历（单程 + 往返缓存）
+│   │   ├── ctrip_calendar.py    # 携程 15380 日历（单程 + 往返缓存）
+│   │   └── ctrip_page.py        # 携程往返订票页：在浏览器窗口里读页面上的往返价
 │   ├── collector.py             # 一次抓取：所有关注航线 → 入库 → 触发提醒
+│   ├── realprice.py             # 固定行程：到点判断、核价并记录、桌面端后台监测线程
 │   ├── analysis/
 │   │   ├── flex.py              # 弹性行程：窗口 × 天数 → 组合 / 排名 / 微调建议
 │   │   └── stats.py             # 历史分位、最低点、24h 变化
@@ -103,6 +105,7 @@ fetch_run      (id, source, started_at, finished_at, status, error, n_quotes)
 oneway_quote   (run_id, origin, dest, depart_date, price, observed_at, airline, airline_price)
 rt_quote       (run_id, origin, dest, depart_date, return_date, price, observed_at)  -- 往返缓存
 manual_quote   (id, origin, dest, depart_date, return_date, price, note, observed_at) -- 手动核价
+real_quote     (id, origin, dest, depart_date, return_date, price, airline, observed_at) -- 携程往返订票页读到的实价
 alert_log      (id, rule, dedupe_key, price, channel, status, message, sent_at)
 price_watch    (id, origin, dest, depart_date, return_date, target_price, enabled, created_at)
 setting        (key, value)   -- 界面覆盖的配置（JSON）
@@ -112,7 +115,8 @@ setting        (key, value)   -- 界面覆盖的配置（JSON）
 - `observed_at` 统一存 UTC ISO 字符串，展示时转北京时间
 - 任意组合的历史走势 = 对每次抓取（run）取 `(out[d] + ret[r]) × 校准比例`，不需要单独存组合
 - `rt_calibration (run_id, origin, dest, ratio, samples)`：每次抓取算出的"真实往返价 ÷ 两张单程之和"（只用停留 ≥ 10 天的缓存组合，至少 8 个样本）
-- `fetch_run` 超过 `retention_days` 的记录连同报价一起清理；停在 running 超过 15 分钟的记录在下次抓取时标为 failed
+- 固定的行程存在 `setting`：`pinned_trip:CHI-SHA → {depart, return}`；最近一次核价的结果存在 `real_check:CHI-SHA → {at, trip, status: ok|blocked|empty|error|running, message, price}`
+- `fetch_run` 超过 `retention_days` 的记录连同报价一起清理（`real_quote` 也按同样的期限清理）；停在 running 超过 15 分钟的记录在下次抓取时标为 failed
 - 航司日历价不高于当日最低价的 101% 时视为匹配。仅查到更高的单家报价时，API 返回 `exact: false` 和该航司起价，估价仍使用当日最低价。v3 数据库升级保留已知航司，原先找不到匹配的日期可重新查询。
 
 ## 核心算法
@@ -145,6 +149,18 @@ setting        (key, value)   -- 界面覆盖的配置（JSON）
 
 比例对所有日期一视同仁且变化很慢，走势图的起伏只反映单程价的真实变化。提醒按预估价判断，但去重键用不含校准的价格（`Trip.raw_price`），比例漂移不会让同一个报价重复提醒。
 
+**固定行程的往返实价**（`realprice.py` + `sources/ctrip_page.py`）
+
+```
+到点判断：上次核价之后过了 max(15 分钟, 抓取间隔)；上次被要求登录/验证则要过 6 小时；换了日期立即核
+核价：屏幕外开一个浏览器窗口 → 打开往返订票页 → 每 2 秒读一次页面，等搜索进度条走完且连续两次读到的价格相同（最多 45 秒）。
+      携程边搜边显示，先出的价格不是最终价（实测先 ¥7,133，6 秒后变 ¥7,125）
+取价：日期条上当前日期的"低"价（整页最低）；没有就取已渲染航班行里的最低价；航司取最低价那一行的
+结果：成功 → real_quote 加一条；失败 → real_check 记下原因（blocked / empty / error），首页显示
+```
+
+桌面端开着时由 `RealPriceMonitor` 线程每 30 秒看一眼是否到点；没开着时任务计划里的 `collect` 会临时启动一个屏幕外窗口核价（`realprice.run_standalone`，180 秒看门狗防止卡住任务计划）。两边用 `real_check` 里的时间互相避让。读到的实价 3 小时内视为"当前价"，到价提醒直接按它判断。实价只用于这个行程本身，不参与其它组合的预估校准（单个日期组合的比例波动太大）。
+
 **价格位置**：当前价在近 N 天所有记录里的分位，"比 X% 的时间便宜"。不做价格预测。
 
 **提醒规则**：目标价、历史新低、24h 跌幅超过阈值；同一条规则 + 同一组合 + 同一价格只推一次；夜间免打扰时延后到早上。
@@ -156,7 +172,9 @@ setting        (key, value)   -- 界面覆盖的配置（JSON）
 | GET | `/api/routes` | 关注的航线与配置 |
 | GET | `/api/calendar?origin&dest&month` | 某方向某月每天最新价 + 当月分档 |
 | GET | `/api/flex?origin&dest&start&end&min&max&ideal` | 弹性行程矩阵、Top N、微调建议 |
-| GET | `/api/history?origin&dest&depart&return&days` | 组合（或单程）价格历史序列 + 统计 |
+| GET | `/api/history?origin&dest&depart&return&days` | 组合（或单程）价格历史序列 + 统计；`real` 里是携程往返实价的序列、统计和最近一次核价结果 |
+| PUT | `/api/pinned` | 固定（或取消固定）首页的行程 |
+| POST | `/api/real-check` | 让桌面端马上去携程往返订票页核一次价（没有桌面端时返回 409） |
 | GET | `/api/status` | 最近抓取记录、成功率、下次抓取时间 |
 | POST | `/api/manual-quote` | 手动录入真实往返价 |
 | POST | `/api/collect` | 立即抓取一次 |
@@ -174,5 +192,6 @@ setting        (key, value)   -- 界面覆盖的配置（JSON）
 ## 风险
 
 - 携程接口变更或开始限流 → 抓取失败时微信提醒，解析逻辑集中在一个文件里，方便修
+- 携程往返订票页改版（类名变化）或开始要求登录/验证 → 读不到时如实显示原因并退回预估，不绕过；解析集中在 `ctrip_page.py`（`EXTRACT_JS` + `parse_snapshot`）
 - 往返预估 ≠ 真实往返价 → 界面标注"预估"并展示两张单程的原始合计和校准比例，提供核价链接；手动录入的实价会反过来校准预估
 - 接口只返回每天的最低价，不含航班号和中转信息 → 在"去携程核价"时查看具体航班
