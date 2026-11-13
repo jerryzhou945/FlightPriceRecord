@@ -76,7 +76,7 @@ function toast(msg, isErr = false) {
 
 const state = {
   routes: [], route: null, flex: null, history: null, sel: null, alerts: null,
-  mode: "combo", days: 7, calDir: "out", calMonth: null, status: null,
+  mode: "combo", days: 7, calDir: "out", calMonth: null, status: null, advice: null,
   view: "overview", lastRunId: null, lastAlertId: null,
   picked: false,  // 用户这次打开后手动挑过别的组合；否则首页显示固定的行程
 };
@@ -195,21 +195,23 @@ async function loadFlex() {
 async function loadHistory() {
   const t = state.sel;
   if (!t) {
-    state.history = null;
+    state.history = state.advice = null;
     renderTrend();
     renderHero();
+    renderAdvice();
     return;
   }
-  try {
-    state.history = await api("/api/history", {
-      origin: state.route.origin, dest: state.route.dest, depart: t.depart, ret: t.return, window: 14,
-    });
-  } catch (e) {
-    state.history = null;
-    toast(e.message, true);
-  }
+  const trip = { origin: state.route.origin, dest: state.route.dest, depart: t.depart, ret: t.return };
+  const [h, a] = await Promise.allSettled([
+    api("/api/history", { ...trip, window: 14 }),
+    api("/api/advice", trip),
+  ]);
+  state.history = h.status === "fulfilled" ? h.value : null;
+  if (h.status === "rejected") toast(h.reason.message, true);
+  state.advice = a.status === "fulfilled" ? a.value : null;
   renderTrend();
   renderHero();
+  renderAdvice();
 }
 
 async function loadCal() {
@@ -413,6 +415,65 @@ function renderHero() {
     : cal.source === "cache"
     ? `携程的公开数据里拿不到长途行程的真实往返价，这里是推算的：对比携程近期的真实往返票（停留 10–14 天）和同一天的两张单程，这条航线的往返票约为单程之和的 <b>${pct}%</b>。实际价格以携程为准——核过价后点“录入实价”，预估会改按你的实价校准。`
     : `目前还没有足够的往返票数据来校准，显示的是分开买两张单程的合计；真实的往返票通常更便宜。核过价后点“录入实价”，预估会按你的实价校准。`;
+}
+
+// 买还是等：结论 + 理由 + 涨价节点时间轴 + 附近更便宜的日期
+function renderAdvice() {
+  const a = state.advice, card = $("adviceCard");
+  card.hidden = !a || !state.sel;
+  if (card.hidden) return;
+  const label = { buy: "建议现在买", watch: "设提醒，限期内买", wait: "可以再等等" }[a.verdict] || "参考";
+  $("adVerdict").className = "verdict " + a.verdict;
+  $("adVerdict").textContent = label;
+  $("adHeadline").textContent = a.headline;
+  $("adReasons").innerHTML = a.reasons.map((r) => `<li>${esc(r)}</li>`).join("");
+
+  // 时间轴：今天在最左，出发日在最右；中间是出发前 42/28/21/14/7 天，突出建议的最晚购买日
+  const dep = state.sel.depart, today = addDays(dep, -a.days_left);
+  const span = Math.max(a.days_left, 1);
+  const pos = (s) => Math.min(100, Math.max(0, ((toMs(s) - toMs(today)) / DAY / span) * 100));
+  const marks = [{ d: today, cls: "today", text: "" }];   // 起点就是今天，标题里已经写了
+  for (const f of a.fences) {
+    const left = Math.round((toMs(dep) - toMs(f)) / DAY);
+    const isDl = f === a.deadline;
+    marks.push({ d: f, cls: isDl ? "deadline" : "", text: isDl ? `${md(f)} 最晚买` : `前${left}天` });
+  }
+  if (!a.fences.includes(a.deadline) && a.deadline > today) marks.push({ d: a.deadline, cls: "deadline", text: `${md(a.deadline)} 最晚买` });
+  marks.push({ d: dep, cls: "dep", text: `${md(dep)} 出发` });
+  // 挨得太近的普通节点只画圆点，不写字
+  let lastPos = -100;
+  $("adTimeline").innerHTML = `<div class="bar"></div>` + marks
+    .sort((x, y) => toMs(x.d) - toMs(y.d))
+    .map((m) => {
+      const p = pos(m.d), show = m.text && (m.cls || (p - lastPos >= 14 && p <= 82));   // 右端留给出发日
+      if (show) lastPos = p;
+      const edge = p > 88 ? " end" : p < 8 ? " start" : "";
+      return `<span class="mk ${m.cls}${edge}" style="left:${p}%" title="${md(m.d)} ${wd(m.d)}"><i></i>${show ? esc(m.text) : ""}</span>`;
+    }).join("");
+
+  const btn = $("adWatch");
+  btn.hidden = !a.target;
+  if (a.target) btn.textContent = `降到 ${yuan(a.target)} 时提醒我`;
+
+  const alts = a.alternatives || [];
+  $("adAlts").hidden = !alts.length;
+  $("adAlts").innerHTML = alts.length
+    ? `<div class="k">附近日期可能更便宜（按单程日历推算，点开到携程核实）</div>` + alts.map((x) => `
+      <a class="alt-row" href="${esc(x.ctrip_url)}" target="_blank" rel="noopener">
+        <span class="when">${md(x.depart)} ${wd(x.depart)} → ${md(x.return)} ${wd(x.return)}</span>
+        <span class="hint">${x.days} 天</span>
+        ${airBadge(x.out_airline)}${airBadge(x.ret_airline)}
+        <span class="price">约 ${yuan(x.expected)}</span>
+        <span class="save">省 ${yuan(x.saving)}</span>
+      </a>`).join("")
+    : "";
+
+  const basis = a.basis === "real" ? "携程往返实价" : "往返预估";
+  const since = a.since ? `${fmtTime(a.since)} 以来的 ${a.n} 次${basis}` : "还没有这个组合的价格记录";
+  const archive = a.last_year
+    ? "已用到本机去年同期的留档。"
+    : `本机从 ${a.archive_from ? md(a.archive_from) : "今天"} 起每天留档，明年同期就能对比。`;
+  $("adFoot").textContent = `依据：${since}、离出发天数和旺季规律。携程不公开往年价格，所以没有往年数据可用；${archive}建议只是参考，不保证价格走势。`;
 }
 
 function renderPlanner() {
@@ -817,7 +878,7 @@ async function saveManual(e) {
   }
 }
 
-function openWatch(trip) {
+function openWatch(trip, target) {
   const t = trip || state.sel || (state.flex && state.flex.best);
   if (!t) { toast("先抓取一次价格，再设置提醒", true); return; }
   const cur = t === state.sel ? currentPrice() : (t.best_price ?? t.price);
@@ -825,7 +886,7 @@ function openWatch(trip) {
   $("wDepart").value = t.depart;
   $("wReturn").value = t.return;
   // 默认比当前价低 3% 左右，取整到 50
-  $("wPrice").value = existing ? existing.target_price : cur ? Math.floor((cur * 0.97) / 50) * 50 : "";
+  $("wPrice").value = target || (existing ? existing.target_price : cur ? Math.floor((cur * 0.97) / 50) * 50 : "");
   $("watchNow").textContent = cur
     ? `当前往返估价 ${yuan(cur)}。降到目标价或更低时通知你${existing ? "（这个组合已有提醒，保存会更新目标价）" : ""}。`
     : "这个组合的往返估价降到目标价或更低时通知你。";
@@ -988,6 +1049,7 @@ async function boot() {
   $("manualForm").addEventListener("submit", saveManual);
   $("manualCancel").addEventListener("click", () => $("manualDlg").close());
   $("heroWatch").addEventListener("click", () => openWatch());
+  $("adWatch").addEventListener("click", () => state.advice && openWatch(null, state.advice.target));
   $("changeTrip").addEventListener("click", () => showView("flex"));
   $("editTrip").addEventListener("click", openTrip);
   $("tripForm").addEventListener("submit", saveTrip);

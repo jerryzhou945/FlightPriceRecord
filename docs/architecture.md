@@ -109,6 +109,7 @@ real_quote     (id, origin, dest, depart_date, return_date, price, airline, obse
 alert_log      (id, rule, dedupe_key, price, channel, status, message, sent_at)
 price_watch    (id, origin, dest, depart_date, return_date, target_price, enabled, created_at)
 setting        (key, value)   -- 界面覆盖的配置（JSON）
+daily_price    (kind, origin, dest, depart_date, return_date, observed_date, low, high, n) -- 每日留档
 ```
 
 - 价格统一为**人民币含税总价、1 位成人、经济舱**
@@ -117,9 +118,22 @@ setting        (key, value)   -- 界面覆盖的配置（JSON）
 - `rt_calibration (run_id, origin, dest, ratio, samples)`：每次抓取算出的"真实往返价 ÷ 两张单程之和"（只用停留 ≥ 10 天的缓存组合，至少 8 个样本）
 - 固定的行程存在 `setting`：`pinned_trip:CHI-SHA → {depart, return}`；最近一次核价的结果存在 `real_check:CHI-SHA → {at, trip, status: ok|blocked|empty|error|running, message, price}`
 - `fetch_run` 超过 `retention_days` 的记录连同报价一起清理（`real_quote` 也按同样的期限清理）；停在 running 超过 15 分钟的记录在下次抓取时标为 failed
+- `daily_price` 是每天的价格留档：`kind=oneway` 为日历单程最低价，`kind=real` 为携程往返实价；`observed_date` 是北京时间日期，`low/high/n` 是当天的最低、最高、次数。写报价时顺手合并，**不随旧抓取清理**，用于和往年同期对比（v7 升级时用已有报价回填）
 - 航司日历价不高于当日最低价的 101% 时视为匹配。仅查到更高的单家报价时，API 返回 `exact: false` 和该航司起价，估价仍使用当日最低价。v3 数据库升级保留已知航司，原先找不到匹配的日期可重新查询。
 
 ## 核心算法
+
+### 购买建议（`analysis/advice.py`）
+
+携程不公开历史价格，也没有免费的往年机票价格数据源，所以不是训练出来的预测模型，而是透明的经验规则 + 本机数据：
+
+- **离出发天数**：≥ 90 天且非旺季 → 可以再等；出发前 21 / 14 / 7 天（以及旺季的 42 天、平季的 28 天）是常见的涨价节点；不到 21 天 → 尽快买
+- **旺季**：出发或返回落在 12/15–1/5、春节前 14 天到后 7 天、6/10–8/31 → 建议最晚购买日为出发前 42 天，否则 28 天
+- **价格位置**：现价不高于监测以来最低价的 101%，且离出发不到 63 天 → 建议现在买；否则给"值得等的价位"（最低价与现价 × 97% 取低）和最晚购买日
+- **跳变**：相邻两次读数变化 ≥ 1.5% 且 ≥ ¥80 记为一次跳涨/跳水
+- **往年同期**：`daily_price` 里去年出发日 ±3 天的去程，从"离出发同样天数"到出发前 21 天的涨跌
+- **附近日期**：出发、返回各 ±3 天，按"现价 ÷ 两张单程之和"折算其他组合，省 ≥ max(¥100, 1.5%) 才列出（每个出发日一条，最多 3 条）
+
 
 **弹性行程搜索**（`analysis/flex.py`）
 
@@ -173,6 +187,7 @@ setting        (key, value)   -- 界面覆盖的配置（JSON）
 | GET | `/api/calendar?origin&dest&month` | 某方向某月每天最新价 + 当月分档 |
 | GET | `/api/flex?origin&dest&start&end&min&max&ideal` | 弹性行程矩阵、Top N、微调建议 |
 | GET | `/api/history?origin&dest&depart&return&days` | 组合（或单程）价格历史序列 + 统计；`real` 里是携程往返实价的序列、统计和最近一次核价结果 |
+| GET | `/api/advice?origin&dest&depart&ret` | 买还是等：结论（buy / watch / wait）、理由、建议最晚购买日、涨价节点、值得等的价位、监测期间的跳变、附近更便宜的日期、去年同期（有留档时） |
 | PUT | `/api/pinned` | 固定（或取消固定）首页的行程 |
 | POST | `/api/real-check` | 让桌面端马上去携程往返订票页核一次价（没有桌面端时返回 409） |
 | GET | `/api/status` | 最近抓取记录、成功率、下次抓取时间 |
