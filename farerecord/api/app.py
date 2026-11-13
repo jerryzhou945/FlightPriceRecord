@@ -641,8 +641,11 @@ def create_app(
 
     @app.delete("/api/ly", status_code=204)
     def ly_off(conn: Conn) -> None:
-        """关闭同程监测（已读到的价格保留）。"""
+        """关闭同程监测（已读到的价格保留），并删掉本机记住的同程登录状态。"""
+        from farerecord import ly_session
+
         settings.save(conn, realprice.LY_ENABLED_KEY, False)
+        ly_session.forget(ly_session.path_for(cfg.database))
 
     @app.post("/api/real-check", status_code=202)
     def real_check() -> dict[str, Any]:

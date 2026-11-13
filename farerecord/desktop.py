@@ -134,7 +134,10 @@ def run(cfg: AppConfig | None = None) -> int:
 
     server, scheduler, app = start_server(cfg, port)
     # 固定监测的行程：后台开一个屏幕外的窗口读携程往返订票页上的真实往返价
-    monitor = RealPriceMonitor(cfg, WebviewReader(webview))
+    from farerecord.ly_session import path_for
+
+    # 同程的登录状态存在 data/ly_session.json，重开窗口后放回去，不用再登录
+    monitor = RealPriceMonitor(cfg, WebviewReader(webview, ly_session=path_for(cfg.database)))
     app.state.real_monitor = monitor
     app.state.ly_login = lambda: open_ly_login(webview, monitor)
     storage = Path(cfg.database).parent / "webview"  # 记住主题等界面偏好
