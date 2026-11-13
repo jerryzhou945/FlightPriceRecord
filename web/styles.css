@@ -515,3 +515,8 @@ footer { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padd
 .route-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 12px; border-radius: var(--r-md); border: 1px solid var(--stroke-soft); background: var(--field); font-size: 13px; }
 .route-item .btn { margin-left: auto; }
 .field select option, .field select optgroup { color: var(--fg); background: var(--glass-solid); }
+
+/* ---------- 同程对比 ---------- */
+.src-tag { display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--down); background: var(--down-soft); }
+.price-note b.down { color: var(--down); }
+.price-note a { color: inherit; }
