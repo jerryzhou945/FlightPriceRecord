@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
@@ -287,10 +288,14 @@ def advise(
             f"能省约 {_yuan(a.saving)}（要到携程核实）。"
         )
 
-    # 值得等的价位：最近的低点，或者比现在低 3%
+    # 值得等的价位：现价高于监测到的最低价时，就等回到那个实际出现过的低点（向上取整到 10 元，
+    # 读到最低价本身也能触发提醒）；现价已经是最低价时，才往下看 3%。
     target = None
     if current is not None:
-        target = float(round(min(low or current, current * 0.97) / 10) * 10)
+        if low is not None and not near_low:
+            target = float(math.ceil(low / 10) * 10)
+        else:
+            target = float(round(current * 0.97 / 10) * 10)
 
     if current is None:
         verdict, headline = "watch", "还没有这个组合的价格，抓到数据后再给建议"

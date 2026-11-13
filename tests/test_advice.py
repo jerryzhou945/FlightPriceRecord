@@ -49,7 +49,7 @@ def test_watch_after_jump_before_deadline() -> None:
     series = [(ts(11, 23), 7125.0), (ts(12, 3), 7325.0)]
     a = advise(date(2026, 11, 12), DEP, RET, series, "real")
     assert a.verdict == "watch"
-    assert a.target == 7110  # min(最低价 7125, 现价 × 97%) 取整到 10 元
+    assert a.target == 7130  # 等回到实际出现过的最低价 7125（向上取整到 10 元），不是现价 × 97%
     assert "11/16" in a.headline
     assert any("跳涨过 1 次" in r for r in a.reasons)
 
