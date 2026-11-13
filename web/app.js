@@ -562,6 +562,23 @@ function renderAdvice() {
   btn.hidden = !a.target;
   if (a.target) btn.textContent = `降到 ${yuan(a.target)} 时提醒我`;
 
+  // 哪家更稳妥：携程（蓝）和同程（绿）并排，标出推荐的那家
+  const pf = a.platforms;
+  $("adPlatforms").hidden = !pf;
+  if (pf) {
+    const cls = { 携程: "ctrip", 同程: "ly" };
+    $("adPlatforms").innerHTML = `<div class="k">哪家更稳妥</div>
+      <div class="pf-row">${pf.rows.map((r) => `
+        <div class="pf ${cls[r.site] || ""}${r.site === pf.pick ? " picked" : ""}">
+          <div class="pf-head"><span class="pf-name">${esc(r.site)}</span>${r.site === pf.pick ? `<span class="pf-badge">推荐</span>` : ""}</div>
+          <div class="pf-price num">${yuan(r.price)}</div>
+          <div class="pf-meta">24 小时 ${yuan(r.low_24h)}–${yuan(r.high_24h)} · 跳动 ${r.jumps_24h} 次</div>
+          <div class="pf-meta">${relTime(r.observed_at)}读取${r.fresh ? "" : " · 已不新"}</div>
+        </div>`).join("")}</div>
+      <p class="pf-reason">${esc(pf.reason)}</p>
+      ${pf.checklist.length ? `<ul class="pf-check">${pf.checklist.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}`;
+  }
+
   const alts = a.alternatives || [];
   $("adAlts").hidden = !alts.length;
   $("adAlts").innerHTML = alts.length
@@ -677,6 +694,7 @@ function renderTop() {
 function renderTrend() {
   if (!trendChart) return;
   const accent = tok("--accent"), down = tok("--down"), up = tok("--up");
+  const ctripLine = tok("--ctrip-line"), lyLine = tok("--ly-line");   // 携程蓝、同程绿
   let pts = [], hint, manual = [], mainName = "往返预估", nextPrice = null, lyPts = [];
   if (state.mode === "combo") {
     const h = state.history, real = realOf(h);
@@ -690,7 +708,7 @@ function renderTrend() {
       nextPrice = real.next_price && real.next_price > real.stats.current ? real.next_price : null;
       if (h.ly && h.ly.series.length) {
         lyPts = h.ly.series.map(([t, p, a, seats]) => [new Date(t).getTime(), p, a || "", seats ?? null]);
-        hint += "；绿色虚线是同程的往返价";
+        hint += "；蓝线是携程，绿线是同程";
       }
     }
   } else {
@@ -711,10 +729,11 @@ function renderTrend() {
   const span = pts.length > 1 ? pts[pts.length - 1][0] - pts[0][0] : 0;
   const hourly = span <= 2 * DAY;
   const target = state.route && state.route.target_price;
+  const lineColor = mainName === "携程往返实价" ? ctripLine : accent;
   const series = [{
     name: mainName, type: "line", data: pts, showSymbol: pts.length < 3,
-    symbolSize: 6, smooth: 0.12, lineStyle: { width: 2.2, color: accent }, itemStyle: { color: accent },
-    areaStyle: { opacity: 0.28, color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: accent }, { offset: 1, color: "rgba(0,0,0,0)" }]) },
+    symbolSize: 6, smooth: 0.12, lineStyle: { width: 2.2, color: lineColor }, itemStyle: { color: lineColor },
+    areaStyle: { opacity: 0.22, color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: lineColor }, { offset: 1, color: "rgba(0,0,0,0)" }]) },
     markPoint: pts.length > 1 ? {
       symbol: "circle", symbolSize: 9, itemStyle: { color: down, borderColor: tok("--bg"), borderWidth: 2 },
       label: { show: true, position: "bottom", distance: 8, color: down, fontWeight: 600, formatter: (p) => "最低 " + yuan(p.value) },
@@ -733,7 +752,7 @@ function renderTrend() {
   }];
   if (lyPts.length) {
     series.push({ name: "同程实价", type: "line", data: lyPts, showSymbol: lyPts.length < 3, symbolSize: 5, smooth: 0.12,
-      lineStyle: { width: 1.8, type: "dashed", color: down }, itemStyle: { color: down } });
+      lineStyle: { width: 2.2, color: lyLine }, itemStyle: { color: lyLine } });
   }
   const seatPts = pts.filter((p) => p[3] != null);
   if (seatPts.length) {
