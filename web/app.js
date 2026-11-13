@@ -30,6 +30,9 @@ function relTime(iso) {
   if (m < 60 * 24) return `${Math.round(m / 60)} 小时前`;
   return `${Math.round(m / 1440)} 天前`;
 }
+function lyUrl(o, d, dep, ret) {   // 同程国际机票往返结果页（要登录同程才看得到）
+  return `https://www.ly.com/iflight/book1.html?para=${o.toUpperCase()}*${d.toUpperCase()}*${dep}*${ret}*RT*1_0_0*Y|S|C|F`;
+}
 function ctripUrl(o, d, dep, ret) {
   return `https://flights.ctrip.com/online/list/round-${o.toLowerCase()}-${d.toLowerCase()}?depdate=${dep}_${ret}&cabin=y_s&adult=1&child=0&infant=0`;
 }
@@ -408,7 +411,7 @@ function renderHero() {
   const t = state.sel, h = state.history;
   let s = h && h.stats;
   const delta = $("kNowDelta"), day = $("kDayDelta");
-  const acts = ["heroLink", "heroWatch", "manualBtn"];
+  const acts = ["heroLink", "heroLy", "heroWatch", "manualBtn"];
   if (!t) {
     $("ovSub").textContent = state.flex && state.flex.observed_at ? "当前窗口没有可用组合" : "还没有价格数据";
     $("kNow").textContent = "—";
@@ -430,6 +433,7 @@ function renderHero() {
   $("kNow").textContent = yuan(cur);
   $("ovSub").textContent = `${md(t.depart)} ${wd(t.depart)} → ${md(t.return)} ${wd(t.return)} · ${t.days} 天`;
   $("heroLink").href = t.ctrip_url || ctripUrl(o, d, t.depart, t.return);
+  $("heroLy").href = (h && h.ly && h.ly.url) || lyUrl(o, d, t.depart, t.return);
   const pin = pinnedTrip(), onPin = isPinnedSel();
   $("pinChip").hidden = !onPin;
   $("pinThis").hidden = onPin;
@@ -900,7 +904,7 @@ function bindSeg(attr, fn) {
 }
 
 async function collectNow() {
-  const btns = [$("collectBtn"), $("emptyCollect")];
+  const btns = [$("collectBtn"), $("emptyCollect"), $("heroCollect")];
   btns.forEach((b) => { b.disabled = true; b.textContent = "抓取中…"; });
   $("statusDot").className = "dot busy";
   $("statusText").textContent = "正在抓取…";
@@ -1199,6 +1203,7 @@ async function boot() {
   $("manualForm").addEventListener("submit", saveManual);
   $("manualCancel").addEventListener("click", () => $("manualDlg").close());
   $("heroWatch").addEventListener("click", () => openWatch());
+  $("heroCollect").addEventListener("click", collectNow);
   $("routeForm").addEventListener("submit", saveRoute);
   $("routeCancel").addEventListener("click", () => $("routeDlg").close());
   $("rOrigin").addEventListener("change", () => { $("rCodeField").hidden = $("rOrigin").value !== "other"; });
