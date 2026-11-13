@@ -21,7 +21,8 @@ python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # 安装（Windo
 3. **提交信息**用 Conventional Commits：`feat: …`、`fix: …`、`test: …`、`docs: …`、`refactor: …`、`chore: …`，描述可用中文。结尾带协作者署名行。
 4. **提交前**必须通过：`pytest -q`、`ruff check .`、`ruff format --check .`。测试不过不提交。
 5. **PR 描述**包含：做了什么、怎么验证的、对应 TASKS.md 哪一项、已知限制。
-6. **合并**：CI 通过后用 squash merge 合并到 `main` 并删除分支；用户要求先审阅时等用户确认。
+6. **合并由用户完成**：Claude 开 PR 并确认 CI 通过，由用户审阅后 squash merge 并删除分支。Claude 不自行合并。
+   后续里程碑可以基于未合并的分支继续开发，PR 的 base 设为上一个里程碑的分支（stacked PR）；上一个合并后 GitHub 会自动把 base 改为 `main`。
 7. 合并后在 TASKS.md 勾选对应任务（可以包含在该 PR 的最后一个 commit 里）。
 
 ## 代码规则

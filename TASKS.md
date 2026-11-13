@@ -17,10 +17,10 @@
 - [x] 配置加载 `config.py`（config.yaml + .env）
 
 ## M2 分析 `feat/m2-analysis`
-- [ ] 弹性行程搜索：窗口 × 天数矩阵、Top N、理想天数微调建议
-- [ ] 组合历史走势（按 run 计算 out+ret）
-- [ ] 统计：近 N 天分位、最低点、24h 变化
-- [ ] CLI `farerecord flex`（终端输出最便宜组合）
+- [x] 弹性行程搜索：窗口 × 天数矩阵、Top N、理想天数微调建议
+- [x] 组合历史走势（按 run 计算 out+ret）
+- [x] 统计：近 N 天分位、最低点、24h 变化
+- [x] CLI `farerecord flex`（终端输出最便宜组合）
 
 ## M3 API `feat/m3-api`
 - [ ] FastAPI 应用与静态文件挂载，CLI `farerecord serve`

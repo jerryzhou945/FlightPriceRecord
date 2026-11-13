@@ -53,6 +53,70 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 0 if res.status != "failed" else 1
 
 
+def _route_or_default(cfg, spec: str | None):
+    if spec:
+        origin, _, dest = spec.upper().partition("-")
+        route = cfg.route(origin, dest)
+        if route is None:
+            raise SystemExit(f"config 里没有航线 {spec}")
+        return route
+    if not cfg.routes:
+        raise SystemExit("config 里没有配置航线（routes）。")
+    return cfg.routes[0]
+
+
+def _wd(d) -> str:
+    return "周" + "一二三四五六日"[d.weekday()]
+
+
+def cmd_flex(args: argparse.Namespace) -> int:
+    from datetime import date
+
+    from farerecord import repository as repo
+    from farerecord.analysis.flex import FlexQuery, search, suggestions
+
+    cfg = load_config(args.config)
+    route = _route_or_default(cfg, args.route)
+    f = route.flex
+    start = date.fromisoformat(args.start) if args.start else f.start
+    end = date.fromisoformat(args.end) if args.end else f.end
+    if not start or not end:
+        print("请用 --start/--end 指定出发窗口，或在 config 里配置 flex.start/end。")
+        return 2
+    q = FlexQuery(
+        start,
+        end,
+        args.min or f.min_days,
+        args.max or f.max_days,
+        args.ideal or f.ideal_days,
+    )
+    conn = db.connect(cfg.database)
+    out = repo.latest_oneway(conn, route.origin, route.dest)
+    back = repo.latest_oneway(conn, route.dest, route.origin)
+    rt = repo.latest_roundtrip(conn, route.origin, route.dest)
+    observed = repo.latest_observed_at(conn, route.origin, route.dest)
+    conn.close()
+    if not out or not back:
+        print("还没有数据，先运行 farerecord collect。")
+        return 1
+    res = search(out, back, q, rt)
+    print(f"{route.name}  出发 {start:%m/%d}–{end:%m/%d}  游玩 {q.min_days}–{q.max_days} 天")
+    print(f"数据时间：{observed}（UTC） · 价格为去程单程 + 回程单程估价")
+    print()
+    print(f"{'出发':<10}{'返回':<10}{'天数':>4}{'去程':>9}{'回程':>9}{'合计':>9}")
+    for t in res.top(args.top):
+        rt_mark = f"  往返实价 ¥{t.rt_price:,.0f}" if t.rt_price else ""
+        print(
+            f"{t.depart_date:%m/%d} {_wd(t.depart_date)}  "
+            f"{t.return_date:%m/%d} {_wd(t.return_date)}  {t.days:>3}"
+            f"{t.out_price:>9,.0f}{t.ret_price:>9,.0f}{t.price:>9,.0f}{rt_mark}"
+        )
+    print()
+    for tip in suggestions(res):
+        print("· " + tip)
+    return 0
+
+
 def _run_alerts(conn, cfg, res) -> None:
     """抓取后评估提醒规则（M5 实现）。"""
     try:
@@ -74,6 +138,16 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("collect", help="抓取一次所有关注航线")
     s.add_argument("--no-alerts", action="store_true", help="只抓取，不发提醒")
     s.set_defaults(func=cmd_collect)
+
+    s = sub.add_parser("flex", help="弹性行程：找窗口内最便宜的去回组合")
+    s.add_argument("--route", help="航线，如 CHI-SHA（默认第一条）")
+    s.add_argument("--start", help="出发窗口开始 YYYY-MM-DD")
+    s.add_argument("--end", help="出发窗口结束 YYYY-MM-DD")
+    s.add_argument("--min", type=int, help="最短天数")
+    s.add_argument("--max", type=int, help="最长天数")
+    s.add_argument("--ideal", type=int, help="理想天数")
+    s.add_argument("--top", type=int, default=10, help="显示前 N 个组合")
+    s.set_defaults(func=cmd_flex)
     return p
 
 
