@@ -148,3 +148,44 @@ def test_few_seats_turns_watch_into_buy() -> None:
     assert any("没有提示余票紧张" in r and "贵 ¥200" in r for r in calm.reasons)
     # 剩得多（比如 7 张）不算紧张
     assert advise(date(2026, 11, 12), DEP, RET, series, "real", seats_left=7).verdict == "watch"
+
+
+def test_pick_platform_rules() -> None:
+    from datetime import UTC, datetime
+
+    from farerecord.analysis.advice import pick_platform, platform_view
+
+    now = datetime(2026, 11, 13, 1, 0, tzinfo=UTC)
+
+    def series(*prices, start_h=0):
+        return [
+            (f"2026-11-13T{start_h + i // 4:02d}:{(i % 4) * 15:02d}:00+00:00", p)
+            for i, p in enumerate(prices)
+        ]
+
+    ctrip = platform_view("携程", series(7259, 7259, 7400, 7259), now, DEP)
+    assert (ctrip.price, ctrip.low_24h, ctrip.high_24h, ctrip.jumps_24h) == (7259, 7259, 7400, 2)
+
+    # 差价 ¥291（≥ ¥200）：推荐同程，附核对清单
+    ly = platform_view("同程", series(6968, 6968, 6968, 6968), now, DEP)
+    p = pick_platform(ctrip, ly)
+    assert p.pick == "同程" and "便宜 ¥291" in p.reason and len(p.checklist) == 3
+
+    # 只便宜 ¥120，但同程跳得比携程多：携程更稳妥
+    jumpy = platform_view("同程", series(7139, 7400, 7139, 7400, 7139), now, DEP)
+    p = pick_platform(ctrip, jumpy)
+    assert p.pick == "携程" and "价格不稳" in p.reason and not p.checklist
+
+    # 只便宜 ¥120、同程也稳：可以选同程
+    calm = platform_view("同程", series(7139, 7139, 7139, 7139), now, DEP)
+    assert pick_platform(ctrip, calm).pick == "同程"
+
+    # 差价不到 ¥100，或携程更便宜：用常用的携程
+    assert pick_platform(ctrip, platform_view("同程", series(7200), now, DEP)).pick == "携程"
+    dearer = pick_platform(ctrip, platform_view("同程", series(7400), now, DEP))
+    assert dearer.pick == "携程" and "携程反而便宜 ¥141" in dearer.reason
+
+    # 同程价格不新：以携程为准
+    old = platform_view("同程", [("2026-11-12T20:00:00+00:00", 6800.0)], now, DEP)
+    assert not old.fresh and pick_platform(ctrip, old).pick == "携程"
+    assert pick_platform(ctrip, None) is None

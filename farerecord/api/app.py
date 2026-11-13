@@ -260,6 +260,44 @@ def create_app(
             "url": ly_page.round_url(o, d, depart, ret),
         }
 
+    def platforms_json(
+        conn: sqlite3.Connection, o: str, d: str, depart: date, ret: date
+    ) -> dict[str, Any] | None:
+        """同一行程在携程、同程的实价对比和"哪家更稳妥"的推荐；只有一家有价格时为 None。"""
+        now = datetime.now(UTC)
+        views = {
+            source: buy_advice.platform_view(
+                name,
+                [
+                    (q["observed_at"], q["price"])
+                    for q in repo.real_quotes(conn, o, d, depart, ret, source)
+                ],
+                now,
+                depart,
+            )
+            for source, name in realprice.SOURCES.items()
+        }
+        pick = buy_advice.pick_platform(views["ctrip"], views["ly"])
+        if pick is None:
+            return None
+        return {
+            "pick": pick.pick,
+            "reason": pick.reason,
+            "checklist": pick.checklist,
+            "rows": [
+                {
+                    "site": v.site,
+                    "price": v.price,
+                    "observed_at": v.observed_at,
+                    "low_24h": v.low_24h,
+                    "high_24h": v.high_24h,
+                    "jumps_24h": v.jumps_24h,
+                    "fresh": v.fresh,
+                }
+                for v in pick.rows
+            ],
+        }
+
     def norm(origin: str, dest: str) -> tuple[str, str]:
         o, d = origin.upper(), dest.upper()
         if len(o) != 3 or len(d) != 3 or not (o + d).isalpha():
@@ -565,6 +603,7 @@ def create_app(
             if a.last_year
             else None,
             "archive_from": archive_from,
+            "platforms": platforms_json(conn, o, d, depart, ret),
         }
 
     @app.put("/api/pinned")
