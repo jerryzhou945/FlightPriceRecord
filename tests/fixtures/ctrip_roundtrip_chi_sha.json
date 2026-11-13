@@ -1,0 +1,79 @@
+{
+ "responseStatus": {
+  "Timestamp": "/Date(1794357878392+0800)/",
+  "Ack": "Success",
+  "Errors": [],
+  "Extension": [
+   {
+    "Id": "flt-roc-guid",
+    "Value": "6151dd3d-d556-429d-860b-5038646a6223"
+   },
+   {
+    "Id": "CLOGGING_TRACE_ID",
+    "Value": "4381542397317954112"
+   },
+   {
+    "Id": "RootMessageId",
+    "Value": "100025527-0a8dabbd-498432-1994251"
+   }
+  ]
+ },
+ "priceList": [
+  {
+   "departDate": "/Date(1798732800000+0800)/",
+   "returnDate": "/Date(1798819200000+0800)/",
+   "price": 15060.0,
+   "totalPrice": 15060.0,
+   "transportPrice": 9810.0
+  },
+  {
+   "departDate": "/Date(1798732800000+0800)/",
+   "returnDate": "/Date(1798905600000+0800)/",
+   "price": 15247.0,
+   "totalPrice": 15247.0,
+   "transportPrice": 11010.0
+  },
+  {
+   "departDate": "/Date(1798819200000+0800)/",
+   "returnDate": "/Date(1798905600000+0800)/",
+   "price": 20425.0,
+   "totalPrice": 20425.0,
+   "transportPrice": 15456.0
+  },
+  {
+   "departDate": "/Date(1798819200000+0800)/",
+   "returnDate": "/Date(1798992000000+0800)/",
+   "price": 12726.0,
+   "totalPrice": 12726.0,
+   "transportPrice": 6987.0
+  },
+  {
+   "departDate": "/Date(1798905600000+0800)/",
+   "returnDate": "/Date(1798992000000+0800)/",
+   "price": 19777.0,
+   "totalPrice": 19777.0,
+   "transportPrice": 14559.0
+  },
+  {
+   "departDate": "/Date(1798905600000+0800)/",
+   "returnDate": "/Date(1799078400000+0800)/",
+   "price": 10837.0,
+   "totalPrice": 10837.0,
+   "transportPrice": 5606.0
+  },
+  {
+   "departDate": "/Date(1798992000000+0800)/",
+   "returnDate": "/Date(1799078400000+0800)/",
+   "price": 17938.0,
+   "totalPrice": 17938.0,
+   "transportPrice": 12723.0
+  },
+  {
+   "departDate": "/Date(1798992000000+0800)/",
+   "returnDate": "/Date(1799164800000+0800)/",
+   "price": 11641.0,
+   "totalPrice": 11641.0,
+   "transportPrice": 8250.0
+  }
+ ]
+}
