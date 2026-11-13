@@ -368,13 +368,30 @@
   </form>
 </dialog>
 
+<dialog id="routeDlg" class="dlg">
+  <form method="dialog" id="routeForm">
+    <h3>添加出发地</h3>
+    <p class="hint">选一个出发城市，加一条航线一起监测；之后每次抓取都会记录它的价格，首页左上角可以切换。</p>
+    <div class="field"><label for="rOrigin">出发地</label><select id="rOrigin" required></select></div>
+    <div class="field" id="rCodeField" hidden><label for="rCode">城市三字码</label><input id="rCode" type="text" maxlength="3" autocomplete="off" placeholder="如 PHX" pattern="[A-Za-z]{3}"></div>
+    <div class="field"><label for="rDest">目的地</label><select id="rDest" required></select></div>
+    <p class="hint" id="routeLimit"></p>
+    <div class="route-list" id="routeList"></div>
+    <p class="form-error" id="routeError" hidden></p>
+    <div class="dlg-actions">
+      <button class="btn" type="button" id="routeCancel">取消</button>
+      <button class="btn accent" type="submit">添加并抓取</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="wechatDlg" class="dlg wide">
   <form method="dialog" id="wechatForm">
     <h3>微信推送</h3>
     <p class="hint">价格到位时手机也能收到。口令只保存在这台电脑的 .env 文件里。</p>
     <div class="seg full" role="group" aria-label="推送方式">
-      <button type="button" data-wx="wxpusher_spt" aria-pressed="true">WxPusher 扫码（推荐）</button>
-      <button type="button" data-wx="pushplus" aria-pressed="false">PushPlus</button>
+      <button type="button" data-wx="pushplus" aria-pressed="false">PushPlus（微信里收）</button>
+      <button type="button" data-wx="wxpusher_spt" aria-pressed="true">WxPusher（需装 App）</button>
       <button type="button" data-wx="wxpusher" aria-pressed="false">WxPusher 应用</button>
     </div>
     <div class="wx-pane" data-pane="wxpusher_spt">
@@ -384,12 +401,13 @@
           <li>用微信扫左边的二维码，按提示关注 WxPusher</li>
           <li>它会发给你一串以 <b>SPT_</b> 开头的口令</li>
           <li>把口令粘贴到下面，保存后会发一条测试消息</li>
+          <li>WxPusher 现在把消息推到它自己的 App，需要装 WxPusher App 并用同一个微信登录才收得到</li>
         </ol>
       </div>
       <div class="field"><label for="wxSpt">SPT 口令</label><input id="wxSpt" type="password" autocomplete="off" placeholder="SPT_…"></div>
     </div>
     <div class="wx-pane" data-pane="pushplus" hidden>
-      <p class="hint">在 <a href="https://www.pushplus.plus" target="_blank" rel="noopener">pushplus.plus</a> 用微信登录，复制“一键复制 token”。</p>
+      <p class="hint">在 <a href="https://www.pushplus.plus" target="_blank" rel="noopener">pushplus.plus</a> 用微信登录，复制“一键复制 token”。提醒会出现在微信里的 pushplus 公众号。</p>
       <div class="field"><label for="wxPlus">PushPlus token</label><input id="wxPlus" type="password" autocomplete="off"></div>
     </div>
     <div class="wx-pane" data-pane="wxpusher" hidden>

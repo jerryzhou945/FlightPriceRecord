@@ -77,7 +77,8 @@ def set_pinned(
 
 def pinned_trips(conn: sqlite3.Connection, cfg: AppConfig, today: date) -> list[Pinned]:
     """所有航线上固定的行程；已经出发的不再监测。"""
-    found = (get_pinned(conn, r.origin, r.dest) for r in cfg.routes)
+    routes = settings.effective_config(conn, cfg).routes  # 含界面里添加的航线
+    found = (get_pinned(conn, r.origin, r.dest) for r in routes)
     return [p for p in found if p and p.depart >= today]
 
 
@@ -130,6 +131,8 @@ def check(
             quote.price,
             quote.airline,
             at,
+            seats_left=quote.seats_left,
+            next_price=quote.next_price,
         )
         state.update(status="ok", price=quote.price)
     if state["status"] != "ok":

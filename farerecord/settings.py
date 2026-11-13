@@ -11,7 +11,8 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
-from farerecord.config import AppConfig, clamp_interval, parse_quiet_hours
+from farerecord.cities import route_name
+from farerecord.config import AppConfig, FlexConfig, RouteConfig, clamp_interval, parse_quiet_hours
 
 # 界面可改的提醒设置：键 → 允许的类型
 ALERT_KEYS: dict[str, type | tuple[type, ...]] = {
@@ -24,6 +25,8 @@ ALERT_KEYS: dict[str, type | tuple[type, ...]] = {
 }
 TARGET_PREFIX = "target_price:"
 INTERVAL_KEY = "collector.interval_minutes"
+EXTRA_ROUTES_KEY = "routes.extra"  # 界面里添加的航线：[{"origin", "dest"}]
+MAX_ROUTES = 4  # 每条航线每次抓取约 20 个请求，航线太多一次抓取会很久
 
 
 def load(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -39,6 +42,46 @@ def save(conn: sqlite3.Connection, key: str, value: Any) -> None:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, json.dumps(value)),
         )
+
+
+def extra_routes(stored: dict[str, Any], cfg: AppConfig) -> list[RouteConfig]:
+    """界面里添加的航线。弹性窗口沿用第一条航线的设置；和 config.yaml 重复的忽略。"""
+    base = cfg.routes[0].flex if cfg.routes else FlexConfig()
+    seen = {r.key for r in cfg.routes}
+    out = []
+    for item in stored.get(EXTRA_ROUTES_KEY) or []:
+        o, d = str(item.get("origin", "")).upper(), str(item.get("dest", "")).upper()
+        if len(o) != 3 or len(d) != 3 or o == d or f"{o}-{d}" in seen:
+            continue
+        seen.add(f"{o}-{d}")
+        out.append(RouteConfig(name=route_name(o, d), origin=o, dest=d, flex=replace(base)))
+    return out
+
+
+def add_route(conn: sqlite3.Connection, cfg: AppConfig, origin: str, dest: str) -> RouteConfig:
+    """添加一条航线；已存在或超过上限时抛 ValueError（信息可直接给用户看）。"""
+    current = effective_config(conn, cfg)
+    if current.route(origin, dest):
+        raise ValueError("这条航线已经在监测了")
+    if len(current.routes) >= MAX_ROUTES:
+        raise ValueError(f"最多同时监测 {MAX_ROUTES} 条航线，先删掉一条")
+    items = list(load(conn).get(EXTRA_ROUTES_KEY) or [])
+    items.append({"origin": origin.upper(), "dest": dest.upper()})
+    save(conn, EXTRA_ROUTES_KEY, items)
+    route = effective_config(conn, cfg).route(origin, dest)
+    assert route is not None
+    return route
+
+
+def remove_route(conn: sqlite3.Connection, origin: str, dest: str) -> bool:
+    """删掉界面里添加的航线（config.yaml 里的删不了）；返回是否删掉了。"""
+    o, d = origin.upper(), dest.upper()
+    items = list(load(conn).get(EXTRA_ROUTES_KEY) or [])
+    kept = [i for i in items if (i.get("origin"), i.get("dest")) != (o, d)]
+    if len(kept) == len(items):
+        return False
+    save(conn, EXTRA_ROUTES_KEY, kept)
+    return True
 
 
 def effective_config(conn: sqlite3.Connection, cfg: AppConfig) -> AppConfig:
@@ -57,7 +100,7 @@ def effective_config(conn: sqlite3.Connection, cfg: AppConfig) -> AppConfig:
         replace(r, target_price=stored[TARGET_PREFIX + r.key])
         if TARGET_PREFIX + r.key in stored
         else r
-        for r in cfg.routes
+        for r in cfg.routes + extra_routes(stored, cfg)
     ]
     collector = cfg.collector
     if INTERVAL_KEY in stored:

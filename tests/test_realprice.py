@@ -346,7 +346,7 @@ def test_api_history_shows_real_prices(client) -> None:
     params = {"origin": "CHI", "dest": "SHA", "depart": depart.isoformat(), "ret": ret.isoformat()}
     real = client.get("/api/history", params=params).json()["real"]
     assert real["pinned"] and real["fresh"] and real["check"]["status"] == "ok"
-    assert real["series"][0][1:] == [7139, "土耳其航空"]
+    assert real["series"][0][1:] == [7139, "土耳其航空", None]
     assert real["stats"]["current"] == 7139
     assert real["airline"]["code"] == "TK" and real["airline"]["short"] == "土航"
     # 别的日期没有实价，也不算固定
@@ -361,3 +361,36 @@ def test_api_real_check_needs_the_desktop_monitor(client) -> None:
     monitor = client.app.state.real_monitor = FakeMonitor()
     assert client.post("/api/real-check").status_code == 202 and monitor.kicks == 1
     assert client.get("/api/status").json()["real_monitor"] is True
+
+
+def test_parse_reads_seat_hint_and_next_level() -> None:
+    # 实测页面：土航最低一档没提示余票，全日空那行写着"剩1张"
+    s = snap(
+        items=[
+            [7259, "土耳其航空", None],
+            [7259, "土耳其航空", None],
+            [7333, "土耳其航空", None],
+            [9018, "全日空航空", 1],
+        ],
+        tabs=[[7259, "2026-12-28", "2027-01-20"]],
+    )
+    q = parse_snapshot(s, D, R)
+    assert (q.price, q.seats_left, q.next_price) == (7259, None, 7333)
+    rows = [[7125, "土耳其航空", 2], [7125, "土耳其航空", 0], [7325, "土耳其航空", None]]
+    tight = snap(items=rows, tabs=[])  # 0 张这种读数不可信，忽略
+    q = parse_snapshot(tight, D, R)
+    assert (q.price, q.airline, q.seats_left, q.next_price) == (7125, "土耳其航空", 2, 7325)
+    # 最低价那一行没渲染出来：余票未知，下一档取页面上更高的价
+    q = parse_snapshot(snap(items=[[9800, "美国联合航空", 3]]), D, R)
+    assert (q.price, q.seats_left, q.next_price) == (7139, None, 9800)
+
+
+def test_check_saves_seats(tmp_path) -> None:
+    from farerecord import db, realprice
+    from farerecord import repository as repo
+
+    conn = db.connect(tmp_path / "t.db")
+    s = snap(items=[[7125, "土耳其航空", 2], [7325, "土耳其航空", None]], tabs=[])
+    realprice.check(conn, PIN, reader_of(s), NOW)
+    q = repo.latest_real_quote(conn, "CHI", "SHA", D, R)
+    assert (q["price"], q["seats_left"], q["next_price"]) == (7125, 2, 7325)

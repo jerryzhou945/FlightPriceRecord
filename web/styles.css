@@ -267,7 +267,7 @@ main { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; paddin
 .field { display: grid; gap: 6px; }
 .field label { font-size: 12px; color: var(--muted); }
 .field .row { display: flex; gap: 8px; align-items: center; }
-.field input, .inline-input input {
+.field input, .field select, .inline-input input {
   width: 100%; min-width: 0; font-family: var(--font-display); font-variant-numeric: tabular-nums;
   color: var(--fg); background: var(--field); border: 1px solid var(--stroke-soft); border-radius: 12px; padding: 9px 11px;
 }
@@ -276,7 +276,7 @@ main { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; paddin
 /* 日期框自带的日历按钮很占地方，两个并排时收紧一点，免得撑出面板 */
 .field .row input[type="date"] { padding: 9px 6px 9px 9px; font-size: 13px; }
 .field .row input[type="date"]::-webkit-calendar-picker-indicator { margin-left: 2px; padding: 0; }
-.field input:focus-visible, .inline-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field input:focus-visible, .field select:focus-visible, .inline-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .field .tilde { color: var(--faint); }
 .best { position: relative; padding: 18px; border-radius: var(--r-md); display: grid; gap: 5px; background: linear-gradient(150deg, var(--accent-soft), transparent 70%), var(--field); border: 1px solid var(--stroke); }
 .best .k { font-size: 12px; color: var(--muted); }
@@ -507,3 +507,11 @@ footer { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padd
   .advice-body { grid-template-columns: 1fr; }
   .timeline .mk:not(.deadline):not(.dep) { font-size: 0; }   /* 手机上只给最晚购买日和出发日写字 */
 }
+
+/* ---------- 添加出发地 ---------- */
+.route-list { display: grid; gap: 6px; }
+.route-list:empty { display: none; }
+.route-list .k { font-size: 12px; color: var(--muted); }
+.route-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 12px; border-radius: var(--r-md); border: 1px solid var(--stroke-soft); background: var(--field); font-size: 13px; }
+.route-item .btn { margin-left: auto; }
+.field select option, .field select optgroup { color: var(--fg); background: var(--glass-solid); }

@@ -11,12 +11,15 @@
 4. 往年同期：每日留档（daily_price）攒满一年后，可以看去年同一时期、离出发同样天数时，
    价格后来是涨是跌。第一年没有这部分。
 5. 附近日期：按最新的单程日历推算，前后挪几天能不能便宜不少。
+6. 余票：携程往返页在座位很少时会显示"剩 N 张"，同时页面上能看到下一档价格。
+   某一档快卖完时，价格多半会跳到下一档——这是最直接的涨价信号。
 
 规则的阈值都放在常量里，结论只是参考，不保证价格走势。
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
@@ -42,6 +45,7 @@ JUMP_YUAN = 80
 NEARBY_DAYS = 3  # 附近日期：出发、返回各前后挪这么多天
 MIN_SAVING_PCT = 0.015
 MIN_SAVING_YUAN = 100
+FEW_SEATS = 3  # 携程显示"剩 N 张"且 N 不超过这个数，就当作这一档快卖完了
 
 
 def peak_season(d: date) -> str | None:
@@ -191,6 +195,8 @@ class Advice:
     fences: list[date] = field(default_factory=list)  # 今后的涨价节点
     alternatives: list[Alternative] = field(default_factory=list)
     last_year: LastYear | None = None
+    seats_left: int | None = None  # 现价这一档携程提示的"剩 N 张"
+    next_price: float | None = None  # 页面上的下一档价格
 
 
 def _yuan(v: float) -> str:
@@ -210,6 +216,8 @@ def advise(
     *,
     alternatives: list[Alternative] | None = None,
     last_year: LastYear | None = None,
+    seats_left: int | None = None,
+    next_price: float | None = None,
 ) -> Advice:
     """series：这个组合按时间升序的 (UTC ISO, 价格)，实价优先，没有就用往返预估。"""
     days_left = (depart - today).days
@@ -254,6 +262,16 @@ def advise(
             f"监测期间跳涨过 {len(ups)} 次，最近一次在出发前 {j.days_left} 天，"
             f"{_yuan(j.before)} → {_yuan(j.after)}。"
         )
+    few = seats_left is not None and seats_left <= FEW_SEATS
+    nxt = f"，卖完大概会涨到下一档 {_yuan(next_price)}" if next_price and current else ""
+    if seats_left is not None:
+        reasons.append(f"携程显示这个价只剩 {seats_left} 张{nxt}。")
+    elif next_price and current and next_price > current:
+        step = _yuan(next_price - current)
+        reasons.append(
+            f"携程没有提示余票紧张；页面上下一档是 {_yuan(next_price)}（贵 {step}），"
+            "这一档卖完多半会跳到那里。"
+        )
     if last_year:
         pct = last_year.change_pct * 100
         trend = "基本没变"
@@ -270,10 +288,14 @@ def advise(
             f"能省约 {_yuan(a.saving)}（要到携程核实）。"
         )
 
-    # 值得等的价位：最近的低点，或者比现在低 3%
+    # 值得等的价位：现价高于监测到的最低价时，就等回到那个实际出现过的低点（向上取整到 10 元，
+    # 读到最低价本身也能触发提醒）；现价已经是最低价时，才往下看 3%。
     target = None
     if current is not None:
-        target = float(round(min(low or current, current * 0.97) / 10) * 10)
+        if low is not None and not near_low:
+            target = float(math.ceil(low / 10) * 10)
+        else:
+            target = float(round(current * 0.97 / 10) * 10)
 
     if current is None:
         verdict, headline = "watch", "还没有这个组合的价格，抓到数据后再给建议"
@@ -281,6 +303,8 @@ def advise(
         verdict, headline = "buy", "建议尽快买：离出发太近，很少再降价"
     elif today >= deadline:
         verdict, headline = "buy", f"建议现在买：已经过了建议的最晚购买日 {_md(deadline)}"
+    elif few:
+        verdict, headline = "buy", f"建议现在买：这个价携程只剩 {seats_left} 张，卖完就涨"
     elif near_low and days_left < 63:
         verdict, headline = "buy", "建议现在买：正处在监测以来的低点，后面上涨的可能更大"
     elif days_left >= WAIT_OK and not peak:
@@ -311,4 +335,6 @@ def advise(
         fences=fences,
         alternatives=alternatives,
         last_year=last_year,
+        seats_left=seats_left,
+        next_price=next_price,
     )

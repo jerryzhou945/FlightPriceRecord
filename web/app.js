@@ -156,6 +156,83 @@ function readForm() {
   return { start, end, min, max, ideal: +$("fIdeal").value || null };
 }
 
+/* ---------------- 航线 / 出发地 ---------------- */
+function fillRouteSel(index) {
+  $("routeSel").innerHTML = state.routes
+    .map((r, i) => `<option value="${i}">${esc(r.origin)} ⇄ ${esc(r.dest)} · ${esc(r.name)}</option>`)
+    .join("") + `<option value="add">＋ 添加出发地…</option>`;
+  $("routeSel").value = String(index);
+}
+let cityGroups = null;
+async function openRoutes() {
+  if (!cityGroups) {
+    try { cityGroups = await api("/api/cities"); } catch (e) { toast(e.message, true); return; }
+  }
+  const taken = new Set(state.routes.map((r) => r.key));
+  const dest = state.route ? state.route.dest : "SHA";
+  const opts = (skip) => cityGroups.map((g) => `<optgroup label="${esc(g.group)}">${g.cities
+    .filter((c) => c.code !== skip)
+    .map((c) => `<option value="${c.code}">${esc(c.name)}（${c.code}）</option>`).join("")}</optgroup>`).join("");
+  $("rDest").innerHTML = opts(null);
+  $("rDest").value = dest;
+  $("rOrigin").innerHTML = opts(null) + `<option value="other">其他城市（填三字码）</option>`;
+  // 默认选一个还没监测的北美城市
+  const first = cityGroups[0].cities.find((c) => !taken.has(`${c.code}-${dest}`) && c.code !== dest);
+  $("rOrigin").value = first ? first.code : "other";
+  $("rCodeField").hidden = $("rOrigin").value !== "other";
+  $("rCode").value = "";
+  const custom = state.routes.filter((r) => r.custom);
+  $("routeList").innerHTML = custom.length
+    ? `<div class="k">你添加的航线</div>` + custom.map((r) => `
+      <div class="route-item"><span>${esc(r.origin)} ⇄ ${esc(r.dest)} · ${esc(r.name)}</span>
+        <button class="btn sm ghost" type="button" data-del="${esc(r.origin)}/${esc(r.dest)}">删除</button></div>`).join("")
+    : "";
+  $("routeList").querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deleteRoute(b.dataset.del)));
+  $("routeLimit").textContent = `现在监测 ${state.routes.length} 条航线，最多 4 条（每多一条，每次抓取约多 1 分钟）。`;
+  $("routeError").hidden = true;
+  $("routeDlg").showModal();
+}
+async function reloadRoutes(key) {
+  state.routes = await api("/api/routes");
+  const i = Math.max(0, state.routes.findIndex((r) => r.key === key));
+  fillRouteSel(i);
+  setRoute(state.routes[i]);
+  await loadAll();
+}
+async function saveRoute(e) {
+  e.preventDefault();
+  const origin = ($("rOrigin").value === "other" ? $("rCode").value : $("rOrigin").value).trim().toUpperCase();
+  const dest = $("rDest").value;
+  if (!/^[A-Z]{3}$/.test(origin)) {
+    $("routeError").textContent = "请填 3 个字母的城市三字码";
+    $("routeError").hidden = false;
+    return;
+  }
+  try {
+    const r = await sendJson("/api/routes", "POST", { origin, dest });
+    $("routeDlg").close();
+    toast(`已添加 ${r.name}，正在抓取它的价格…`);
+    await reloadRoutes(r.key);
+    collectNow();
+  } catch (err) {
+    $("routeError").textContent = err.message;
+    $("routeError").hidden = false;
+  }
+}
+async function deleteRoute(path) {
+  const [o, d] = path.split("/");
+  if (!confirm(`删除 ${o} ⇄ ${d}？之后不再抓取这条航线，它的固定行程和到价提醒会停用；已经记下的价格保留。`)) return;
+  try {
+    await api(`/api/routes/${o}/${d}`, null, { method: "DELETE" });
+    $("routeDlg").close();
+    toast(`已删除 ${o} ⇄ ${d}`);
+    await reloadRoutes(state.route && state.route.key !== `${o}-${d}` ? state.route.key : null);
+  } catch (err) {
+    $("routeError").textContent = err.message;
+    $("routeError").hidden = false;
+  }
+}
+
 /* ---------------- 读取 ---------------- */
 async function loadStatus() {
   try {
@@ -365,6 +442,9 @@ function renderHero() {
     const at = real.series[real.series.length - 1][0];
     const who = real.airline ? `${airBadge(real.airline)} ` : "";
     notes.push(`<span class="live${real.fresh ? "" : " stale"}"></span>${who}${relTime(at)}读自携程往返订票页`);
+    const step = real.next_price && real.next_price > cur ? `，卖完约到下一档 ${yuan(real.next_price)}` : "";
+    if (real.seats_left != null) notes.push(`<span class="warn">这个价只剩 ${real.seats_left} 张${step}</span>`);
+    else notes.push(`携程未提示余票紧张${real.next_price && real.next_price > cur ? ` · 下一档 ${yuan(real.next_price)}` : ""}`);
     if (legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
   } else if (calibrated && legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
   if (rinfo && rinfo.pinned) {
@@ -569,17 +649,18 @@ function renderTop() {
 
 function renderTrend() {
   if (!trendChart) return;
-  const accent = tok("--accent"), down = tok("--down");
-  let pts = [], hint, manual = [], mainName = "往返预估";
+  const accent = tok("--accent"), down = tok("--down"), up = tok("--up");
+  let pts = [], hint, manual = [], mainName = "往返预估", nextPrice = null;
   if (state.mode === "combo") {
     const h = state.history, real = realOf(h);
     pts = h ? h.series.map(([t, p]) => [new Date(t).getTime(), p]) : [];
     manual = h ? h.manual.map((m) => [new Date(m.observed_at).getTime(), m.price, m.note || ""]) : [];
     hint = state.sel ? "每次抓取记录一个点；菱形是你录入的真实往返价" : "还没有选中组合";
     if (real) {
-      pts = real.series.map(([t, p, a]) => [new Date(t).getTime(), p, a || ""]);
+      pts = real.series.map(([t, p, a, seats]) => [new Date(t).getTime(), p, a || "", seats ?? null]);
       mainName = "携程往返实价";
-      hint = "每个点是一次从携程往返订票页读到的真实往返价（等页面搜索完成后读取）";
+      hint = "每个点是一次从携程往返订票页读到的真实往返价（等页面搜索完成后读取）；红点是携程提示了余票，虚线是页面上的下一档价格";
+      nextPrice = real.next_price && real.next_price > real.stats.current ? real.next_price : null;
     }
   } else {
     const lh = state.flex ? state.flex.low_history : [];
@@ -607,11 +688,23 @@ function renderTrend() {
       label: { show: true, position: "bottom", distance: 8, color: down, fontWeight: 600, formatter: (p) => "最低 " + yuan(p.value) },
       data: [{ type: "min" }],
     } : undefined,
-    markLine: target ? {
-      symbol: "none", silent: true, lineStyle: { type: "dashed", color: down, opacity: 0.8 },
-      label: { color: down, position: "insideStartTop", formatter: "目标 " + yuan(target) }, data: [{ yAxis: target }],
+    markLine: target || nextPrice ? {
+      symbol: "none", silent: true,
+      data: [
+        target ? { yAxis: target, lineStyle: { type: "dashed", color: down, opacity: 0.8 },
+          label: { color: down, position: "insideStartTop", formatter: "目标 " + yuan(target) } } : null,
+        // 这一档卖完后，价格多半会跳到页面上的下一档
+        nextPrice ? { yAxis: nextPrice, lineStyle: { type: "dotted", color: up, opacity: 0.9 },
+          label: { color: up, position: "insideEndTop", formatter: `下一档 ${yuan(nextPrice)}` } } : null,
+      ].filter(Boolean),
     } : undefined,
   }];
+  const seatPts = pts.filter((p) => p[3] != null);
+  if (seatPts.length) {
+    series.push({ name: "余票提示", type: "scatter", data: seatPts, symbolSize: 9,
+      itemStyle: { color: up, borderColor: tok("--bg"), borderWidth: 1.5 },
+      label: { show: true, position: "top", color: up, fontSize: 11, fontWeight: 600, formatter: (p) => `剩${p.value[3]}张` } });
+  }
   if (manual.length) {
     series.push({ name: "手动核价", type: "scatter", data: manual, symbol: "diamond", symbolSize: 11,
       itemStyle: { color: down, borderColor: tok("--bg"), borderWidth: 1.5 } });
@@ -627,10 +720,12 @@ function renderTrend() {
         const head = fmtTime(new Date(ps[0].value[0]).toISOString());
         const rows = ps.map((x) => {
           const extra = x.seriesName === "窗口最低" && x.value[2] ? ` <span style="opacity:.6">${md(x.value[2])}→${md(x.value[3])}</span>` : "";
+          if (x.seriesName === "余票提示") return "";
           const note = ["手动核价", "携程往返实价"].includes(x.seriesName) && x.value[2] ? ` <span style="opacity:.6">${esc(x.value[2])}</span>` : "";
-          return `${x.marker}${x.seriesName} <b>${yuan(x.value[1])}</b>${extra}${note}`;
+          const seats = x.seriesName === "携程往返实价" && x.value[3] != null ? ` <b style="color:${up}">剩 ${x.value[3]} 张</b>` : "";
+          return `${x.marker}${x.seriesName} <b>${yuan(x.value[1])}</b>${extra}${note}${seats}`;
         });
-        return [head, ...rows].join("<br>");
+        return [head, ...rows.filter(Boolean)].join("<br>");
       },
     },
     xAxis: { type: "time", minInterval: hourly ? HOUR : DAY, axisLine: { lineStyle: { color: tok("--stroke") } }, axisTick: { show: false },
@@ -639,7 +734,7 @@ function renderTrend() {
       splitLine: { show: false } },
     yAxis: { type: "value", scale: true, splitNumber: 4,
       min: (v) => Math.floor((v.min - Math.max((v.max - v.min) * 0.25, v.max * 0.004, 20)) / 10) * 10,
-      max: (v) => Math.ceil((v.max + Math.max((v.max - v.min) * 0.25, v.max * 0.004, 20)) / 10) * 10,
+      max: (v) => { const hi = Math.max(v.max, nextPrice || 0); return Math.ceil((hi + Math.max((hi - v.min) * 0.25, hi * 0.004, 20)) / 10) * 10; },
       axisLabel: { color: tok("--muted"), formatter: (v) => yuan(v) },  // 小时级波动常常只有几十元，不能缩写成 k
       splitLine: { lineStyle: { color: tok("--grid") } } },
     series,
@@ -970,7 +1065,7 @@ function openWechat() {
   ["wxSpt", "wxPlus", "wxApp", "wxUid"].forEach((id) => ($(id).value = ""));
   $("wechatError").hidden = true;
   $("wechatOff").hidden = !w.provider;
-  setWxProvider(w.provider || "wxpusher_spt");
+  setWxProvider(w.provider || "pushplus");
   $("wechatDlg").showModal();
 }
 async function saveWechat(e) {
@@ -1049,6 +1144,9 @@ async function boot() {
   $("manualForm").addEventListener("submit", saveManual);
   $("manualCancel").addEventListener("click", () => $("manualDlg").close());
   $("heroWatch").addEventListener("click", () => openWatch());
+  $("routeForm").addEventListener("submit", saveRoute);
+  $("routeCancel").addEventListener("click", () => $("routeDlg").close());
+  $("rOrigin").addEventListener("change", () => { $("rCodeField").hidden = $("rOrigin").value !== "other"; });
   $("adWatch").addEventListener("click", () => state.advice && openWatch(null, state.advice.target));
   $("changeTrip").addEventListener("click", () => showView("flex"));
   $("editTrip").addEventListener("click", openTrip);
@@ -1105,8 +1203,16 @@ async function boot() {
     toast("config.yaml 里还没有配置航线", true);
     return;
   }
-  sel.innerHTML = state.routes.map((r, i) => `<option value="${i}">${esc(r.origin)} ⇄ ${esc(r.dest)} · ${esc(r.name)}</option>`).join("");
-  sel.addEventListener("change", () => { setRoute(state.routes[+sel.value]); loadAll(); });
+  fillRouteSel(0);
+  sel.addEventListener("change", () => {
+    if (sel.value === "add") {   // 最后一项是"添加出发地"，不是航线
+      sel.value = String(state.routes.indexOf(state.route));
+      openRoutes();
+      return;
+    }
+    setRoute(state.routes[+sel.value]);
+    loadAll();
+  });
   setRoute(state.routes[0]);
   await loadAll();
   const latest = state.status && state.status.runs.find((r) => r.status !== "running");

@@ -32,7 +32,8 @@ OFFSCREEN = -30000  # 窗口放在屏幕外：页面要"可见"才会加载，�
 SETTLE_SECONDS = 14.0  # 认不出搜索进度条时，报价出现后至少再等这么久
 PRICE_RANGE = (200, 300_000)  # 读到这个范围以外的数字，多半是读错了
 
-# 读页面上已经渲染出来的内容：每个航班行的价格和航司、日期条上当前日期的最低价。
+# 读页面上已经渲染出来的内容：每个航班行的价格、航司和余票提示（携程只在座位很少时
+# 在价格旁显示"剩 N 张"），以及日期条上当前日期的最低价。
 EXTRACT_JS = r"""
 (function () {
   var items = [];
@@ -41,7 +42,13 @@ EXTRACT_JS = r"""
     var m = p && p.innerText.match(/[¥￥]\s*([\d,]+)/);
     if (!m) return;
     var a = el.querySelector('.airline-name');
-    items.push([+m[1].replace(/,/g, ''), a ? a.innerText.trim() : '']);
+    var seat = null;
+    [].slice.call(el.querySelectorAll('*')).some(function (x) {
+      var s = !x.children.length && x.textContent.match(/剩\s*(\d+)\s*张/);
+      if (s) seat = +s[1];
+      return !!s;
+    });
+    items.push([+m[1].replace(/,/g, ''), a ? a.innerText.trim() : '', seat]);
   });
   var tabs = [];
   [].slice.call(document.querySelectorAll('.calendar-lowprice li.tab')).forEach(function (li) {
@@ -72,6 +79,11 @@ class PageEmpty(SourceError):
 class PageQuote:
     price: float
     airline: str | None = None  # 最低价那一行的航司名（页面上的中文名）
+    # 最低价那一行的"剩 N 张"。携程只在座位很少（实测见过剩 1 张）时才显示，
+    # None 表示页面没提示余票紧张（或最低价那一行没渲染出来）。
+    seats_left: int | None = None
+    # 页面上比最低价高的下一档价格（优先同一家航司）：这一档卖完后大概会涨到这里
+    next_price: float | None = None
 
 
 def round_url(origin: str, dest: str, depart: date, ret: date) -> str:
@@ -100,9 +112,9 @@ def parse_snapshot(snap: dict[str, Any], depart: date, ret: date) -> PageQuote:
     if _dates_marker(depart, ret) not in str(snap.get("url") or ""):
         raise PageEmpty("携程没有按这两个日期显示结果")
     items = [
-        (float(p), str(a or "").strip())
-        for p, a in snap.get("items") or []
-        if PRICE_RANGE[0] <= float(p) <= PRICE_RANGE[1]
+        (float(row[0]), str(row[1] or "").strip(), _seat(row))
+        for row in snap.get("items") or []
+        if PRICE_RANGE[0] <= float(row[0]) <= PRICE_RANGE[1]
     ]
     if not items:
         raise PageEmpty("页面上没有读到报价（没加载完，或这两天没有航班）")
@@ -114,9 +126,23 @@ def parse_snapshot(snap: dict[str, Any], depart: date, ret: date) -> PageQuote:
         if (d1, d2) == (depart.isoformat(), ret.isoformat())
         and PRICE_RANGE[0] <= float(p) <= PRICE_RANGE[1]
     ]
-    price = min(strip) if strip else min(p for p, _ in items)
-    airline = next((a for p, a in sorted(items) if p == price and a), None)
-    return PageQuote(price, airline)
+    price = min(strip) if strip else min(p for p, _, _ in items)
+    airline = next((a for p, a, _ in sorted(items, key=lambda x: x[0]) if p == price and a), None)
+    seats = [s for p, _, s in items if p == price and s is not None]
+    higher = sorted(p for p, a, _ in items if p > price and (not airline or a == airline))
+    higher = higher or sorted(p for p, _, _ in items if p > price)
+    return PageQuote(price, airline, min(seats) if seats else None, higher[0] if higher else None)
+
+
+def _seat(row: list[Any]) -> int | None:
+    """旧版脚本的行只有 [价格, 航司]；新版第三项是"剩 N 张"的 N 或 null。"""
+    if len(row) < 3 or row[2] in (None, ""):
+        return None
+    try:
+        n = int(row[2])
+    except (TypeError, ValueError):
+        return None
+    return n if 0 < n < 100 else None
 
 
 def _keep_out_of_taskbar(window: Any) -> None:
