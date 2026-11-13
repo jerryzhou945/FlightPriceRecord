@@ -28,28 +28,26 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    from farerecord.collector import collect
-    from farerecord.sources.ctrip_calendar import CtripCalendarSource
+    from farerecord.collector import CollectionNotDue, collect_and_alert
 
     cfg = load_config(args.config)
     if not cfg.routes:
         print("config 里没有配置航线（routes）。")
         return 2
     conn = db.connect(cfg.database)
-    source = CtripCalendarSource(timeout=cfg.collector.timeout_seconds)
     try:
-        res = collect(conn, cfg, source)
+        res = collect_and_alert(conn, cfg, if_due=args.if_due, alerts=not args.no_alerts)
+    except CollectionNotDue:
+        print(f"距离上次抓取不到 {cfg.collector.interval_minutes} 分钟，跳过。")
+        return 0
     finally:
-        source.close()
+        conn.close()
     labels = {"ok": "成功", "partial": "部分成功", "failed": "失败"}
     print(f"抓取{labels[res.status]}：共 {res.n_quotes} 条报价（run #{res.run_id}）")
     for key, n in res.per_route.items():
         print(f"  {key}: {n} 条")
     for err in res.errors:
         print(f"  ⚠ {err}")
-    if not args.no_alerts:
-        _run_alerts(conn, cfg, res)
-    conn.close()
     return 0 if res.status != "failed" else 1
 
 
@@ -134,39 +132,28 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_notify_test(args: argparse.Namespace) -> int:
-    from datetime import datetime
+def cmd_app(args: argparse.Namespace) -> int:
+    from farerecord.desktop import DesktopUnavailable, run
 
-    from farerecord.alerts import send_message
-    from farerecord.alerts.notifiers import make_notifier
-    from farerecord.alerts.rules import Alert, Message
+    try:
+        return run(load_config(args.config))
+    except DesktopUnavailable as exc:
+        print(exc)
+        return 2
+
+
+def cmd_notify_test(args: argparse.Namespace) -> int:
+    from farerecord.alerts import send_test
 
     cfg = load_config(args.config)
-    n = make_notifier(cfg.alerts.channel)
-    if n.name != "console" and not n.configured:
-        print(f"{n.label} 还没有配置，请在 .env 里填写密钥（见 .env.example）。")
-        return 2
-    now = datetime.now().astimezone()
-    msg = Message(
-        "航价记测试消息",
-        f"### ✅ 航价记推送测试\n\n收到这条消息说明微信提醒已经配置好了。\n\n{now:%Y-%m-%d %H:%M}",
-        None,
-        [Alert("test", f"test:{now.isoformat()}")],
-    )
     conn = db.connect(cfg.database)
-    ok = send_message(conn, msg, n, now)
+    ok, n = send_test(conn, cfg)
     conn.close()
+    if n.name == "console":
+        print("没有可用的推送通道：桌面通知已关闭，微信密钥也没有配置（见 .env.example）。")
+        return 2
     print(f"已发送到 {n.label}" if ok else "发送失败，查看上面的错误信息。")
     return 0 if ok else 1
-
-
-def _run_alerts(conn, cfg, res) -> None:
-    """抓取后评估提醒规则（M5 实现）。"""
-    try:
-        from farerecord.alerts import run_after_collect
-    except ImportError:
-        return
-    run_after_collect(conn, cfg, res)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -180,6 +167,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("collect", help="抓取一次所有关注航线")
     s.add_argument("--no-alerts", action="store_true", help="只抓取，不发提醒")
+    s.add_argument(
+        "--if-due",
+        action="store_true",
+        help="距离上次抓取不到一个间隔（collector.interval_minutes）就跳过，定时任务用",
+    )
     s.set_defaults(func=cmd_collect)
 
     s = sub.add_parser("flex", help="弹性行程：找窗口内最便宜的去回组合")
@@ -195,7 +187,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("notify-test", help="发送一条测试提醒")
     s.set_defaults(func=cmd_notify_test)
 
-    s = sub.add_parser("serve", help="启动网页看板")
+    s = sub.add_parser("app", help="打开桌面窗口（开着时按间隔自动抓取）")
+    s.set_defaults(func=cmd_app)
+
+    s = sub.add_parser("serve", help="启动网页看板（浏览器里看）")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--open", action="store_true", help="启动后自动打开浏览器")

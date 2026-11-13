@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 4
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -61,6 +61,29 @@ _MIGRATIONS: dict[int, str] = {
     );
     CREATE INDEX ix_alert_dedupe ON alert_log(rule, dedupe_key);
     """,
+    2: """
+    ALTER TABLE oneway_quote ADD COLUMN airline TEXT;   -- 出最低价的航司二字码，可为空
+    """,
+    3: """
+    CREATE TABLE price_watch (                 -- 界面里给某个去回组合设的到价提醒
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        origin       TEXT NOT NULL,
+        dest         TEXT NOT NULL,
+        depart_date  TEXT NOT NULL,
+        return_date  TEXT NOT NULL,
+        target_price REAL NOT NULL,
+        enabled      INTEGER NOT NULL DEFAULT 1,
+        created_at   TEXT NOT NULL
+    );
+    CREATE TABLE setting (                     -- 界面里改的设置，覆盖 config.yaml
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL                    -- JSON
+    );
+    """,
+    4: """
+    ALTER TABLE oneway_quote ADD COLUMN airline_price REAL;   -- airline 这家航司当天的最低价
+    UPDATE oneway_quote SET airline = NULL WHERE airline = ''; -- 旧版只查精确匹配，重新查参考价
+    """,
 }
 
 
@@ -80,7 +103,13 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def migrate(conn: sqlite3.Connection) -> int:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     for version in range(current + 1, SCHEMA_VERSION + 1):
-        with conn:
-            conn.executescript(_MIGRATIONS[version])
-            conn.execute(f"PRAGMA user_version = {version}")
+        try:
+            with conn:
+                conn.executescript(
+                    f"BEGIN IMMEDIATE;\n{_MIGRATIONS[version]}\nPRAGMA user_version = {version};"
+                )
+        except sqlite3.OperationalError:
+            # 另一个进程可能已在等写锁期间完成同一迁移。
+            if conn.execute("PRAGMA user_version").fetchone()[0] < version:
+                raise
     return conn.execute("PRAGMA user_version").fetchone()[0]

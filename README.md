@@ -19,12 +19,12 @@ UI 原型：[prototype/ui-demo.html](prototype/ui-demo.html)
 git clone https://github.com/jerryzhou945/FlightPriceRecord.git
 cd FlightPriceRecord
 python -m venv .venv
-.venv\Scripts\pip install -e .
+.venv\Scripts\pip install -e ".[desktop]"
 copy config.example.yaml config.yaml
 copy .env.example .env
 ```
 
-macOS / Linux 把 `.venv\Scripts\` 换成 `.venv/bin/`，`copy` 换成 `cp`。
+只使用网页看板和命令行时可用 `pip install -e .`。macOS / Linux 把 `.venv\Scripts\` 换成 `.venv/bin/`，`copy` 换成 `cp`。
 
 ## 配置
 
@@ -49,33 +49,35 @@ routes:
 ## 日常使用
 
 ```bash
-.venv\Scripts\farerecord collect      # 抓取一次（约 10 秒）
+.venv\Scripts\farerecord app          # Windows 桌面窗口，打开期间会自动抓取
+.venv\Scripts\farerecord collect      # 手动抓取一次
 .venv\Scripts\farerecord serve --open # 打开网页看板 http://127.0.0.1:8765
 .venv\Scripts\farerecord flex         # 在终端里看最便宜的组合
 ```
 
-也可以双击 `scripts\serve.cmd` 打开看板。
+桌面窗口使用 Microsoft Edge WebView2。运行 `powershell -ExecutionPolicy Bypass -File scripts\install-shortcut.ps1` 可在桌面和开始菜单创建「航价记」快捷方式。也可以双击 `scripts\serve.cmd` 在浏览器中打开看板。
 
 | 命令 | 作用 |
 |---|---|
-| `farerecord collect [--no-alerts]` | 抓取所有航线并评估提醒 |
+| `farerecord app` | 打开桌面窗口并启动定时抓取 |
+| `farerecord collect [--if-due] [--no-alerts]` | 抓取所有航线；可按间隔跳过，或关闭本次提醒 |
 | `farerecord serve [--port 8765] [--open]` | 启动网页看板 |
 | `farerecord flex [--route CHI-SHA] [--start --end --min --max --ideal --top]` | 终端里的弹性行程搜索 |
 | `farerecord notify-test` | 发一条测试提醒 |
 | `farerecord init-db` | 创建数据库（一般不需要手动运行） |
 
-## 每天自动抓取
+## 定时抓取
 
-在 PowerShell 里运行一次：
+桌面窗口打开时会检查是否到点，间隔由 `config.yaml` 的 `collector.interval_minutes` 控制（默认 60 分钟）。需要关掉窗口后继续记录时，在 PowerShell 里运行一次：
 
 ```bash
 powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1
 ```
 
-默认每天 00:00、06:00、12:00、18:00 各抓一次，日志写到 `logs\collect.log`。电脑关机错过的时间点会在开机后补跑。改时间：
+任务计划默认每 60 分钟运行一次 `collect --if-due`，日志写到 `logs\collect.log`。桌面端和任务计划共用数据库，同一时刻到点只抓一次。电脑关机错过的时间点会在开机后补跑。如需每两小时检查一次：
 
 ```bash
-powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1 -Times 08:00,20:00
+powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1 -IntervalMinutes 120
 ```
 
 删除任务：
@@ -86,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 ## 微信提醒
 
-默认用 [WxPusher](https://wxpusher.zjiecode.com)（免费）：
+默认配置使用 Windows 桌面通知。要同时推送到微信，可以配置 [WxPusher](https://wxpusher.zjiecode.com)：
 
 1. 微信扫码登录 WxPusher 后台，新建一个应用，复制 **APP_TOKEN**
 2. 用微信扫应用的关注二维码，在"用户管理"里复制自己的 **UID**
@@ -100,7 +102,7 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 也可以用 [PushPlus](https://www.pushplus.plus)：在 `.env` 填 `PUSHPLUS_TOKEN`，`alerts.channel: pushplus`。
 
-提醒规则在 `config.yaml` 的 `alerts` 里调整：
+在「提醒」页可以为某个去回组合设目标价，也可以调整桌面通知、整条航线的目标价和免打扰时段。界面设置保存在本机数据库中，优先于 `config.yaml` 的默认值。
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
@@ -116,7 +118,7 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 - **总览**：所选组合的估价和 24 小时变化、在近 14 天里的价格位置、窗口内去程和回程的单段最低价
 - **价格走势**：所选组合 / 窗口最低两种曲线，标出最低点和目标价；手动录入的实价显示为菱形点
-- **低价日历**：去程、回程每天的最低价，最便宜的 20% 标绿
+- **低价日历**：去程、回程每天的最低价，最便宜的 20% 标绿。标有「参考」的航司有单独的起价，可在日期提示中查看
 - **弹性行程**：出发日 × 游玩天数的热力图，点格子看该组合的走势；Top 列表里如果携程有缓存的真实往返价，会一起显示
 - **提醒**、**抓取记录**：规则状态、最近推送、每次抓取结果
 
@@ -140,4 +142,4 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 ## 声明
 
-仅供个人查询价格参考。请遵守携程服务条款，保持较低的抓取频率（默认每天 4 次、每次 3 个请求），不要用于商业用途。
+仅供个人查询价格参考。请遵守携程服务条款，保持较低的抓取频率。每条航线有 3 个基础日历请求；航司识别会按需增加查询，可通过 `collector.airline_lookups` 限制每个方向的查询数，设为 0 可关闭识别。

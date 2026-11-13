@@ -5,11 +5,12 @@
 ## 常用命令
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # 安装（Windows）
+python -m venv .venv && .venv/Scripts/pip install -e ".[dev,desktop]"   # 安装（Windows）
 .venv/Scripts/python -m pytest -q                                 # 测试
 .venv/Scripts/python -m ruff check . && .venv/Scripts/python -m ruff format --check .
 .venv/Scripts/farerecord collect          # 抓取一次
-.venv/Scripts/farerecord serve            # 打开网页 http://127.0.0.1:8765
+.venv/Scripts/farerecord app              # 打开桌面窗口（开着时每小时自动抓取）
+.venv/Scripts/farerecord serve            # 浏览器里看 http://127.0.0.1:8765
 ```
 
 ## Git 工作流（必须遵守）
@@ -36,9 +37,9 @@ python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # 安装（Windo
 
 ## 抓取规则（重要）
 
-- 只使用公开、无需登录的接口（当前是携程 15380 低价日历）
+- 只使用公开、无需登录的接口（当前是携程 15380 低价日历，含它自带的航司筛选）
 - **不做反爬绕过**：不伪造设备指纹、不破解签名、不用代理池、不处理验证码
-- 频率：每天最多 6 次，每次请求之间间隔 ≥ 2 秒
+- 频率：定时抓取最多每小时 1 次（`collector.interval_minutes` ≥ 30），每次请求之间间隔 ≥ 2 秒
 - 抓取失败要记录到 `fetch_run` 并可触发微信提醒，不能静默失败
 
 ## 安全与隐私

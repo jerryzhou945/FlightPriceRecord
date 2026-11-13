@@ -17,7 +17,7 @@
 | 携程网页版往返列表 `flights.ctrip.com/online/list/...` | ❌ 无头浏览器被风控拦截（whaleguard block） | 不使用；只生成链接让用户手动核价 |
 | 携程 H5 往返列表（Playwright） | ❌ 风控 wasm + "服务器发生异常" | 不使用 |
 
-原则：**不做反爬绕过、不登录账号、不用代理池**。每天抓 2–4 次，每次只有几个请求。
+原则：**不做反爬绕过、不登录账号、不用代理池**。默认每小时抓取，每条航线读取去程、回程和往返缓存。航司识别按需额外读取候选航司日历，每个方向默认最多 8 家。
 
 因此往返价格采用**单程组合估价**：`去程单程最低价(出发日) + 回程单程最低价(返回日)`。界面上始终标注"估价"，并提供"去携程核价"链接和"手动录入真实往返价"的入口。短途组合如果在往返日历缓存里存在，就同时展示真实往返价。
 
@@ -28,7 +28,7 @@
 ## 总体结构
 
 ```
-          ┌──────────────┐   每天 2–4 次（Windows 任务计划 / GitHub Actions）
+          ┌──────────────┐   默认每小时（桌面定时器 / Windows 任务计划）
           │  collector   │──────────────────────────────┐
           └──────┬───────┘                              │
                  │ sources/ctrip_calendar.py            │
@@ -57,7 +57,7 @@
 | 存储 | SQLite（标准库 `sqlite3`） | 单文件、零运维，数据量很小 |
 | Web | FastAPI + Uvicorn | 同时提供 JSON API 和静态前端 |
 | 前端 | 原生 ES Modules + ECharts（本地 vendor） | 不需要构建步骤，和 UI demo 一脉相承 |
-| 微信推送 | WxPusher（默认）、PushPlus（备选） | 免费、关注公众号即可接收 |
+| 通知 | Windows 桌面通知，可叠加 WxPusher 或 PushPlus | 在提醒页调整规则 |
 | 配置 | `config.yaml`（航线、提醒规则）+ `.env`（密钥） | 密钥不进仓库 |
 | 调度 | Windows 任务计划程序；可选 GitHub Actions | 本地优先，云端可选 |
 | 质量 | pytest + ruff，GitHub Actions CI | 每个 PR 自动检查 |
@@ -82,7 +82,9 @@ FlightPriceRecord/
 │   │   ├── rules.py             # 目标价、历史新低、单日跌幅、免打扰、去重
 │   │   └── notifiers.py         # WxPusher / PushPlus / 控制台
 │   ├── api/app.py               # FastAPI：/api/* + 挂载 web/
-│   └── cli.py                   # farerecord collect | serve | flex | notify-test | quote
+│   ├── desktop.py               # WebView2 窗口和本机 HTTP 服务
+│   ├── scheduler.py             # 桌面窗口打开期间按间隔抓取
+│   └── cli.py                   # farerecord app | collect | serve | flex | notify-test | init-db
 ├── web/                         # 前端（index.html, app.js, styles.css, vendor/echarts）
 ├── tests/                       # pytest（接口响应用录制的 JSON fixture）
 ├── scripts/                     # Windows 任务计划注册脚本等
@@ -98,15 +100,18 @@ FlightPriceRecord/
 
 ```sql
 fetch_run      (id, source, started_at, finished_at, status, error, n_quotes)
-oneway_quote   (run_id, origin, dest, depart_date, price, observed_at)        -- 主数据
+oneway_quote   (run_id, origin, dest, depart_date, price, observed_at, airline, airline_price)
 rt_quote       (run_id, origin, dest, depart_date, return_date, price, observed_at)  -- 往返缓存
 manual_quote   (id, origin, dest, depart_date, return_date, price, note, observed_at) -- 手动核价
-alert_log      (id, rule, dedupe_key, price, channel, status, sent_at)
+alert_log      (id, rule, dedupe_key, price, channel, status, message, sent_at)
+price_watch    (id, origin, dest, depart_date, return_date, target_price, enabled, created_at)
+setting        (key, value)   -- 界面覆盖的配置（JSON）
 ```
 
 - 价格统一为**人民币含税总价、1 位成人、经济舱**
 - `observed_at` 统一存 UTC ISO 字符串，展示时转北京时间
 - 任意组合的历史走势 = 对每次抓取（run）取 `out[d] + ret[r]`，不需要单独存组合
+- 航司日历价不高于当日最低价的 101% 时视为匹配。仅查到更高的单家报价时，API 返回 `exact: false` 和该航司起价，估价仍使用当日最低价。v3 数据库升级保留已知航司，原先找不到匹配的日期可重新查询。
 
 ## 核心算法
 
@@ -139,11 +144,14 @@ alert_log      (id, rule, dedupe_key, price, channel, status, sent_at)
 | GET | `/api/status` | 最近抓取记录、成功率、下次抓取时间 |
 | POST | `/api/manual-quote` | 手动录入真实往返价 |
 | POST | `/api/collect` | 立即抓取一次 |
+| GET / PUT | `/api/alerts`、`/api/alerts/settings` | 读取提醒状态、保存界面设置 |
+| POST | `/api/alerts/test` | 测试当前通知通道 |
+| POST / PATCH / DELETE | `/api/watches`、`/api/watches/{id}` | 创建、修改、删除组合到价提醒 |
 
 ## 部署方式
 
-1. **本地（默认）**：`farerecord serve` 打开网页；Windows 任务计划每天 4 次运行 `farerecord collect`
-2. **云端（可选）**：GitHub Actions 定时抓取，SQLite 存在单独的 `data` 分支，Pages 发布静态快照，电脑不开机也能记录
+1. **本地**：`farerecord app` 在回环地址的随机端口启动服务，WebView2 和浏览器共用 `web/` 页面。桌面定时器与「立即抓取」共用进程锁。桌面定时器和 Windows 任务计划的 `collect --if-due` 在 SQLite 写事务内检查间隔并登记抓取，网络请求在提交之后进行。浏览器模式使用 `farerecord serve --open`。
+2. **云端（可选规划 M7）**：GitHub Actions 定时抓取、独立数据分支和 Pages 静态快照见任务清单。
 
 ## 风险
 

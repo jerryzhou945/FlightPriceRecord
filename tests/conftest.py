@@ -29,3 +29,11 @@ def seed_run(conn, observed_at: str, out: dict, back: dict, status: str = "ok") 
 
 def daterange(start: date, n: int) -> list[date]:
     return [start + timedelta(days=i) for i in range(n)]
+
+
+@pytest.fixture(autouse=True)
+def toasts(monkeypatch):
+    """桌面通知不真的弹出来，只记下内容。"""
+    shown: list[str] = []
+    monkeypatch.setattr("farerecord.alerts.notifiers.run_toast", shown.append)
+    return shown

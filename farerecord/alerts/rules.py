@@ -11,19 +11,21 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 from farerecord import repository as repo
+from farerecord.airlines import airline_text
 from farerecord.analysis.flex import FlexQuery
 from farerecord.analysis.history import flex_low_history
 from farerecord.config import AppConfig, RouteConfig
-from farerecord.models import Trip
+from farerecord.models import OnewayQuote, PriceWatch, Trip
 
 RULE_LABELS = {
+    "watch": "到达提醒价",
     "target": "低于目标价",
     "new_low": "历史新低",
     "drop": "大幅降价",
     "fail": "抓取失败",
     "test": "测试消息",
 }
-_PRIORITY = ["new_low", "target", "drop"]
+_PRIORITY = ["watch", "new_low", "target", "drop"]
 
 
 @dataclass
@@ -100,7 +102,42 @@ def evaluate_route(
     return alerts, cur, info
 
 
-def build_price_message(route: RouteConfig, trip: Trip, alerts: list[Alert], info: dict) -> Message:
+def watch_trip(conn: sqlite3.Connection, watch: PriceWatch) -> Trip | None:
+    """到价提醒对应组合的当前价格；任意一段没有报价返回 None。"""
+    o, d = watch.origin, watch.dest
+    out = repo.latest_oneway(conn, o, d).get(watch.depart_date)
+    back = repo.latest_oneway(conn, d, o).get(watch.return_date)
+    if not out or not back:
+        return None
+    rt = repo.latest_roundtrip(conn, o, d).get((watch.depart_date, watch.return_date))
+    return Trip(watch.depart_date, watch.return_date, out, back, rt)
+
+
+def evaluate_watch(
+    conn: sqlite3.Connection, watch: PriceWatch, today: date
+) -> tuple[Alert | None, Trip | None]:
+    """返回 (触发的提醒或 None, 当前组合价格)。已出发或被关闭的提醒不触发。"""
+    if not watch.enabled or watch.depart_date < today:
+        return None, None
+    trip = watch_trip(conn, watch)
+    if trip is None or trip.best_price > watch.target_price:
+        return None, trip
+    return Alert("watch", f"{watch.id}:{trip.best_price:.0f}", trip.best_price), trip
+
+
+def _airline_suffix(quote: OnewayQuote | None) -> str:
+    text = airline_text(quote)
+    return f" · {text}" if text else ""
+
+
+def build_price_message(
+    route: RouteConfig,
+    trip: Trip,
+    alerts: list[Alert],
+    info: dict,
+    airlines: tuple[OnewayQuote | None, OnewayQuote | None] = (None, None),
+) -> Message:
+    """airlines：(去程, 回程) 带航司信息的报价，没有为 None。"""
     from farerecord.api.app import ctrip_url
 
     rules = sorted({a.rule for a in alerts}, key=_PRIORITY.index)
@@ -112,9 +149,9 @@ def build_price_message(route: RouteConfig, trip: Trip, alerts: list[Alert], inf
         f"### 🔻 {route.name} {head} ¥{price:,.0f}",
         "",
         f"- 去程 {trip.depart_date:%m/%d} {_wd(trip.depart_date)} {route.origin}→{route.dest}"
-        f" ¥{trip.out_price:,.0f}",
+        f" ¥{trip.out_price:,.0f}{_airline_suffix(airlines[0])}",
         f"- 回程 {trip.return_date:%m/%d} {_wd(trip.return_date)} {route.dest}→{route.origin}"
-        f" ¥{trip.ret_price:,.0f}",
+        f" ¥{trip.ret_price:,.0f}{_airline_suffix(airlines[1])}",
         f"- {trip.days} 天"
         + (f" · 目标价 ¥{route.target_price:,.0f}" if route.target_price else ""),
     ]
