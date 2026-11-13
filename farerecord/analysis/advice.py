@@ -218,6 +218,7 @@ def advise(
     last_year: LastYear | None = None,
     seats_left: int | None = None,
     next_price: float | None = None,
+    elsewhere: list[tuple[str, float]] | None = None,
 ) -> Advice:
     """series：这个组合按时间升序的 (UTC ISO, 价格)，实价优先，没有就用往返预估。"""
     days_left = (depart - today).days
@@ -272,6 +273,15 @@ def advise(
             f"携程没有提示余票紧张；页面上下一档是 {_yuan(next_price)}（贵 {step}），"
             "这一档卖完多半会跳到那里。"
         )
+    for site, price in elsewhere or []:  # 别的平台同一行程的实价
+        if current and price < current:
+            reasons.append(
+                f"{site}同一行程现在 {_yuan(price)}，比携程便宜 {_yuan(current - price)}。"
+            )
+        elif current and price > current:
+            reasons.append(
+                f"{site}同一行程现在 {_yuan(price)}，比携程贵 {_yuan(price - current)}。"
+            )
     if last_year:
         pct = last_year.change_pct * 100
         trend = "基本没变"

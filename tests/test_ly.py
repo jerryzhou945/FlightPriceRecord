@@ -128,3 +128,44 @@ def test_run_due_reads_both_and_blocked_ly_backs_off(tmp_path) -> None:
     later = now + timedelta(minutes=30)
     got = realprice.run_due(conn, c, read, now=later, alerts=False, sources=("ctrip", "ly"))
     assert [r["source"] for r in got] == ["ctrip"]
+
+
+def test_ly_api(tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    from farerecord.api.app import create_app
+
+    c = cfg(tmp_path)
+    conn = db.connect(c.database)
+    realprice.set_pinned(conn, "CHI", "SHA", D, R)
+    now = datetime.now(UTC).replace(microsecond=0)
+    repo.add_real_quote(conn, "CHI", "SHA", D, R, 7259, "土耳其航空", now.isoformat())
+    repo.add_real_quote(
+        conn, "CHI", "SHA", D, R, 6968, "土耳其航空", now.isoformat(), next_price=7146, source="ly"
+    )
+    settings.save(conn, "real_check_ly:CHI-SHA", {"status": "blocked", "at": now.isoformat()})
+    conn.close()
+    app = create_app(c, web_dir=None)
+    client = TestClient(app)
+    params = {"origin": "CHI", "dest": "SHA", "depart": "2026-12-28", "ret": "2027-01-20"}
+
+    h = client.get("/api/history", params=params).json()
+    assert h["real"]["stats"]["current"] == 7259
+    ly = h["ly"]
+    assert ly["stats"]["current"] == 6968 and ly["next_price"] == 7146 and ly["fresh"]
+    assert ly["enabled"] is False and "ly.com/iflight" in ly["url"]
+
+    a = client.get("/api/advice", params=params).json()
+    assert any("同程同一行程现在 ¥6,968，比携程便宜 ¥291" in r for r in a["reasons"])
+
+    assert client.post("/api/ly/login").status_code == 409  # 没有桌面端
+    opened = []
+    app.state.ly_login = lambda: opened.append(True)
+    assert client.post("/api/ly/login").status_code == 202 and opened == [True]
+    s = client.get("/api/status").json()
+    assert s["ly_enabled"] and s["ly_login"]
+    conn = db.connect(c.database)
+    assert realprice.check_state(conn, PIN, "ly") is None  # 登录后不用再等 6 小时
+    conn.close()
+    assert client.delete("/api/ly").status_code == 204
+    assert client.get("/api/status").json()["ly_enabled"] is False

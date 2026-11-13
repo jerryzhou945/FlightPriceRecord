@@ -39,6 +39,7 @@ from farerecord.config import (
 from farerecord.envfile import update_env_file
 from farerecord.models import OnewayQuote, PriceWatch, Trip
 from farerecord.settings import effective_config
+from farerecord.sources import ly_page
 from farerecord.sources.base import PriceSource
 from farerecord.sources.ctrip_page import round_url
 
@@ -204,6 +205,7 @@ def create_app(
     app.state.env_file = env_file or cfg.env_file  # 微信口令写到这里
     app.state.collect_lock = threading.Lock()  # 手动抓取和定时抓取共用，避免同时请求携程
     app.state.real_monitor = None  # 桌面端启动后放进来：读携程往返订票页的后台监测
+    app.state.ly_login = None  # 桌面端放进来：打开一个窗口让用户自己登录同程
 
     def pinned_json(p: realprice.Pinned | None) -> dict[str, Any] | None:
         if p is None:
@@ -234,6 +236,28 @@ def create_app(
             "airline": airline_by_name(quotes[-1]["airline"]) if quotes else None,
             "fresh": age is not None and age <= realprice.FRESH,
             "check": realprice.check_state(conn, pinned) if is_pinned and pinned else None,
+        }
+
+    def ly_json(
+        conn: sqlite3.Connection, o: str, d: str, depart: date, ret: date, window: int
+    ) -> dict[str, Any]:
+        """同程往返结果页读到的价格（需要用户在桌面端登录过同程）。"""
+        quotes = repo.real_quotes(conn, o, d, depart, ret, "ly")
+        pinned = realprice.get_pinned(conn, o, d)
+        is_pinned = pinned is not None and (pinned.depart, pinned.ret) == (depart, ret)
+        last = quotes[-1] if quotes else None
+        age = datetime.now(UTC) - datetime.fromisoformat(last["observed_at"]) if last else None
+        return {
+            "enabled": bool(settings.load(conn).get(realprice.LY_ENABLED_KEY)),
+            "series": [
+                [q["observed_at"], q["price"], q["airline"], q["seats_left"]] for q in quotes
+            ],
+            "stats": stats_json(compute([(q["observed_at"], q["price"]) for q in quotes], window)),
+            "seats_left": last["seats_left"] if last else None,
+            "next_price": last["next_price"] if last else None,
+            "fresh": age is not None and age <= realprice.FRESH,
+            "check": realprice.check_state(conn, pinned, "ly") if is_pinned and pinned else None,
+            "url": ly_page.round_url(o, d, depart, ret),
         }
 
     def norm(origin: str, dest: str) -> tuple[str, str]:
@@ -449,6 +473,7 @@ def create_app(
             "stats": stats_json(compute(series, window_days=window)),
             "manual": manual,
             "real": real_json(conn, o, d, depart, ret, window) if ret else None,
+            "ly": ly_json(conn, o, d, depart, ret, window) if ret else None,
             "ctrip_url": ctrip_url(o, d, depart, ret),
         }
 
@@ -487,6 +512,12 @@ def create_app(
             last_year=last_year,
             seats_left=latest.get("seats_left"),
             next_price=latest.get("next_price"),
+            elsewhere=[
+                ("同程", q["price"])
+                for q in [repo.latest_real_quote(conn, o, d, depart, ret, "ly")]
+                if q
+                and datetime.now(UTC) - datetime.fromisoformat(q["observed_at"]) <= realprice.FRESH
+            ],
         )
         archive_from = conn.execute("SELECT MIN(observed_date) FROM daily_price").fetchone()[0]
         return {
@@ -557,6 +588,23 @@ def create_app(
             monitor.kick()  # 马上去读一次真实往返价
         return {"pinned": pinned_json(realprice.get_pinned(conn, o, d))}
 
+    @app.post("/api/ly/login", status_code=202)
+    def ly_login(conn: Conn) -> dict[str, Any]:
+        """开启同程监测，并在桌面端弹出同程登录窗口——账号密码由用户自己在那个窗口里输入。"""
+        opener = app.state.ly_login
+        if opener is None:
+            raise HTTPException(409, "只有桌面端能登录同程，请用 farerecord app 打开")
+        settings.save(conn, realprice.LY_ENABLED_KEY, True)
+        for r in effective_config(conn, cfg).routes:  # 清掉"需要登录"的记录，登录后马上重读
+            settings.save(conn, f"real_check_ly:{r.key}", None)
+        opener()
+        return {"enabled": True}
+
+    @app.delete("/api/ly", status_code=204)
+    def ly_off(conn: Conn) -> None:
+        """关闭同程监测（已读到的价格保留）。"""
+        settings.save(conn, realprice.LY_ENABLED_KEY, False)
+
     @app.post("/api/real-check", status_code=202)
     def real_check() -> dict[str, Any]:
         """让后台马上去携程往返订票页核一次价（只有桌面端有这个能力）。"""
@@ -581,6 +629,8 @@ def create_app(
             "next_due_at": due.isoformat() if due else None,
             "collecting": app.state.collect_lock.locked(),
             "real_monitor": app.state.real_monitor is not None,
+            "ly_enabled": bool(settings.load(conn).get(realprice.LY_ENABLED_KEY)),
+            "ly_login": app.state.ly_login is not None,
             "real_checking": bool(getattr(app.state.real_monitor, "busy", False)),
             "runs": runs,
             "fail_streak": repo.fail_streak(conn),

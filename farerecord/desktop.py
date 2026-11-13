@@ -111,6 +111,19 @@ def style_window(window) -> None:
             set_window_icon(hwnd)
 
 
+def open_ly_login(webview, monitor) -> None:
+    """弹出同程登录页。用户自己输入账号密码；关掉窗口后马上去读一次同程价格。
+
+    和后台读价的窗口共用同一个 WebView2 数据目录，所以这里登录后，后台窗口也是登录状态。
+    """
+    from farerecord.sources.ly_page import LOGIN_URL
+
+    window = webview.create_window(
+        "登录同程（登录成功后关掉这个窗口）", LOGIN_URL, width=520, height=760
+    )
+    window.events.closed += monitor.kick
+
+
 def run(cfg: AppConfig | None = None) -> int:
     cfg = cfg or load_config()
     webview = import_webview()
@@ -123,6 +136,7 @@ def run(cfg: AppConfig | None = None) -> int:
     # 固定监测的行程：后台开一个屏幕外的窗口读携程往返订票页上的真实往返价
     monitor = RealPriceMonitor(cfg, WebviewReader(webview))
     app.state.real_monitor = monitor
+    app.state.ly_login = lambda: open_ly_login(webview, monitor)
     storage = Path(cfg.database).parent / "webview"  # 记住主题等界面偏好
     try:
         window = webview.create_window(
