@@ -427,11 +427,13 @@ def add_real_quote(
     price: float,
     airline: str | None = None,
     observed_at: str | None = None,
+    seats_left: int | None = None,
+    next_price: float | None = None,
 ) -> int:
     with conn:
         cur = conn.execute(
             "INSERT INTO real_quote (origin, dest, depart_date, return_date, price, airline, "
-            "observed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "observed_at, seats_left, next_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 origin,
                 dest,
@@ -440,6 +442,8 @@ def add_real_quote(
                 price,
                 airline,
                 observed_at or utcnow_iso(),
+                seats_left,
+                next_price,
             ),
         )
         _archive(

@@ -225,7 +225,11 @@ def create_app(
         )
         return {
             "pinned": is_pinned,
-            "series": [[q["observed_at"], q["price"], q["airline"]] for q in quotes],
+            "series": [
+                [q["observed_at"], q["price"], q["airline"], q["seats_left"]] for q in quotes
+            ],
+            "seats_left": quotes[-1]["seats_left"] if quotes else None,  # 携程的"剩 N 张"
+            "next_price": quotes[-1]["next_price"] if quotes else None,  # 页面上的下一档价格
             "stats": stats_json(compute(series, window_days=window)),
             "airline": airline_by_name(quotes[-1]["airline"]) if quotes else None,
             "fresh": age is not None and age <= realprice.FRESH,
@@ -472,8 +476,17 @@ def create_app(
             conn, "oneway", o, d, ly - timedelta(days=3), ly + timedelta(days=3)
         )
         last_year = buy_advice.last_year_outlook(rows, depart, days_left)
+        latest = real[-1] if real else {}
         a = buy_advice.advise(
-            today, depart, ret, series, basis, alternatives=alts, last_year=last_year
+            today,
+            depart,
+            ret,
+            series,
+            basis,
+            alternatives=alts,
+            last_year=last_year,
+            seats_left=latest.get("seats_left"),
+            next_price=latest.get("next_price"),
         )
         archive_from = conn.execute("SELECT MIN(observed_date) FROM daily_price").fetchone()[0]
         return {
@@ -489,6 +502,8 @@ def create_app(
             "low_at": a.low_at,
             "high": a.high,
             "basis": a.basis,
+            "seats_left": a.seats_left,
+            "next_price": a.next_price,
             "n": len(series),
             "since": series[0][0] if series else None,
             "jumps": [
