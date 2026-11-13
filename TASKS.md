@@ -36,10 +36,10 @@
 - [x] 手动核价录入、立即抓取按钮
 
 ## M5 微信提醒 `feat/m5-alerts`
-- [ ] 推送通道：WxPusher、PushPlus、控制台（测试用）
-- [ ] 规则：目标价、历史新低、24h 跌幅、抓取连续失败
-- [ ] 去重与夜间免打扰
-- [ ] CLI `farerecord notify-test`；collector 抓取后自动评估规则
+- [x] 推送通道：WxPusher、PushPlus、控制台（测试用）
+- [x] 规则：目标价、历史新低、24h 跌幅、抓取连续失败
+- [x] 去重与夜间免打扰
+- [x] CLI `farerecord notify-test`；collector 抓取后自动评估规则
 
 ## M6 调度与使用文档 `feat/m6-schedule`
 - [ ] Windows 任务计划注册/删除脚本（每天 4 次）
