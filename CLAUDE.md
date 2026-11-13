@@ -50,6 +50,7 @@ python -m venv .venv && .venv/Scripts/pip install -e ".[dev,desktop]"   # 安装
 
 - `.env`、`config.yaml`、`data/`（数据库）不进仓库；只提交 `*.example`
 - 推送 token、UID 只从环境变量读取，日志中不打印
+- 同程登录状态（Cookie）只存在本机 `data/ly_session.json`，不进仓库、不打印到日志，关闭同程监测时删除
 - 仓库默认私有；改为公开前检查历史提交里没有密钥
 
 ## 文档
