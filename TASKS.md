@@ -42,8 +42,8 @@
 - [x] CLI `farerecord notify-test`；collector 抓取后自动评估规则
 
 ## M6 调度与使用文档 `feat/m6-schedule`
-- [ ] Windows 任务计划注册/删除脚本（每天 4 次）
-- [ ] README：安装、配置、微信绑定、日常使用
+- [x] Windows 任务计划注册/删除脚本（每天 4 次）
+- [x] README：安装、配置、微信绑定、日常使用
 
 ## M7 云端运行（可选）`feat/m7-cloud`
 - [ ] GitHub Actions 定时抓取，数据库存 `data` 分支
