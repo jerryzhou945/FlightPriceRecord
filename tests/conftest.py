@@ -29,3 +29,19 @@ def seed_run(conn, observed_at: str, out: dict, back: dict, status: str = "ok") 
 
 def daterange(start: date, n: int) -> list[date]:
     return [start + timedelta(days=i) for i in range(n)]
+
+
+@pytest.fixture(autouse=True)
+def toasts(monkeypatch):
+    """桌面通知不真的弹出来，只记下内容。"""
+    shown: list[str] = []
+    monkeypatch.setattr("farerecord.alerts.notifiers.run_toast", shown.append)
+    return shown
+
+
+@pytest.fixture(autouse=True)
+def clean_push_env(monkeypatch):
+    """推送口令的环境变量：每个测试从"没配置"开始，测试里写进去的结束后还原。"""
+    for key in ("WXPUSHER_SPT", "WXPUSHER_APP_TOKEN", "WXPUSHER_UID", "PUSHPLUS_TOKEN"):
+        monkeypatch.setenv(key, "x")  # 先 set 再 del，monkeypatch 才会记住原始状态
+        monkeypatch.delenv(key)

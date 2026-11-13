@@ -5,11 +5,12 @@
 ## 常用命令
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # 安装（Windows）
+python -m venv .venv && .venv/Scripts/pip install -e ".[dev,desktop]"   # 安装（Windows）
 .venv/Scripts/python -m pytest -q                                 # 测试
 .venv/Scripts/python -m ruff check . && .venv/Scripts/python -m ruff format --check .
 .venv/Scripts/farerecord collect          # 抓取一次
-.venv/Scripts/farerecord serve            # 打开网页 http://127.0.0.1:8765
+.venv/Scripts/farerecord app              # 打开桌面窗口（开着时每小时自动抓取）
+.venv/Scripts/farerecord serve            # 浏览器里看 http://127.0.0.1:8765
 ```
 
 ## Git 工作流（必须遵守）
@@ -21,7 +22,8 @@ python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # 安装（Windo
 3. **提交信息**用 Conventional Commits：`feat: …`、`fix: …`、`test: …`、`docs: …`、`refactor: …`、`chore: …`，描述可用中文。结尾带协作者署名行。
 4. **提交前**必须通过：`pytest -q`、`ruff check .`、`ruff format --check .`。测试不过不提交。
 5. **PR 描述**包含：做了什么、怎么验证的、对应 TASKS.md 哪一项、已知限制。
-6. **合并**：CI 通过后用 squash merge 合并到 `main` 并删除分支；用户要求先审阅时等用户确认。
+6. **合并由用户完成**：Claude 开 PR 并确认 CI 通过，由用户审阅后 squash merge 并删除分支。Claude 不自行合并。
+   后续里程碑可以基于未合并的分支继续开发，PR 的 base 设为上一个里程碑的分支（stacked PR）；上一个合并后 GitHub 会自动把 base 改为 `main`。
 7. 合并后在 TASKS.md 勾选对应任务（可以包含在该 PR 的最后一个 commit 里）。
 
 ## 代码规则
@@ -31,14 +33,18 @@ python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # 安装（Windo
 - 业务逻辑（flex、stats、rules、解析）必须有单元测试；网络请求一律可注入/可 mock，**测试不访问真实网络**
 - 接口解析用录制的真实响应作为 fixture（`tests/fixtures/`），去掉无关字段
 - 时间：数据库存 UTC ISO 字符串；日期（出发/返回日）存 `YYYY-MM-DD`；展示用北京时间
-- 价格：统一人民币、含税总价、1 位成人、经济舱。单程组合出来的往返价必须标注为"估价"
+- 价格：统一人民币、含税总价、1 位成人、经济舱。按单程价推算的往返价必须标注为"预估"，并能看到"两张单程"的原始合计；只有从携程往返订票页读到的价格才能叫"实价"，并显示读取时间
 
 ## 抓取规则（重要）
 
-- 只使用公开、无需登录的接口（当前是携程 15380 低价日历）
-- **不做反爬绕过**：不伪造设备指纹、不破解签名、不用代理池、不处理验证码
-- 频率：每天最多 6 次，每次请求之间间隔 ≥ 2 秒
-- 抓取失败要记录到 `fetch_run` 并可触发微信提醒，不能静默失败
+- 只使用公开、无需登录的数据：
+  - 携程 15380 低价日历接口（含它自带的航司筛选）
+  - 携程往返订票页：只针对用户固定监测的行程，在真实的浏览器窗口（WebView2）里打开页面、读页面上已经显示的价格和余票提示（"剩 N 张"）；不直接调用页面背后的搜索接口
+  - 同程旅行国际机票往返结果页（用户 2026-11-12 同意）：要登录才能看，由用户在航价记的桌面窗口里自己登录（Claude 不经手账号密码），之后同样只读页面上已经显示的价格和余票；只在桌面端读，任务计划里不读；登录失效时停下并在首页提示
+- 航空公司官网不抓：官网普遍有反爬保护，也不在上面这些来源之内
+- **不做反爬绕过**：不伪造设备指纹、不破解签名、不用代理池、不处理验证码。往返订票页要求登录或出现验证码时立即停止并在界面上提示，至少隔 6 小时再试
+- 频率：定时抓取最快每 15 分钟 1 次（`collector.interval_minutes` ≥ 15，默认 30），每次请求之间间隔 ≥ 2 秒；航司识别是额外请求，按 `airline_refresh_minutes`（默认 120）节流，不随抓取频率增加；往返订票页（携程、同程）每个固定行程跟抓取间隔走，最快每 15 分钟读 1 次
+- 抓取失败要记录到 `fetch_run` 并可触发微信提醒，不能静默失败；往返订票页读取失败要记下原因（`setting` 的 `real_check:*`）并显示在首页
 
 ## 安全与隐私
 
