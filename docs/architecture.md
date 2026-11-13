@@ -105,7 +105,7 @@ fetch_run      (id, source, started_at, finished_at, status, error, n_quotes)
 oneway_quote   (run_id, origin, dest, depart_date, price, observed_at, airline, airline_price)
 rt_quote       (run_id, origin, dest, depart_date, return_date, price, observed_at)  -- 往返缓存
 manual_quote   (id, origin, dest, depart_date, return_date, price, note, observed_at) -- 手动核价
-real_quote     (id, origin, dest, depart_date, return_date, price, airline, observed_at) -- 携程往返订票页读到的实价
+real_quote     (id, origin, dest, depart_date, return_date, price, airline, observed_at, seats_left, next_price) -- 携程往返订票页读到的实价、余票提示、下一档价格
 alert_log      (id, rule, dedupe_key, price, channel, status, message, sent_at)
 price_watch    (id, origin, dest, depart_date, return_date, target_price, enabled, created_at)
 setting        (key, value)   -- 界面覆盖的配置（JSON）
@@ -133,6 +133,7 @@ daily_price    (kind, origin, dest, depart_date, return_date, observed_date, low
 - **价格位置**：现价不高于监测以来最低价的 101%，且离出发不到 63 天 → 建议现在买；否则给"值得等的价位"（最低价与现价 × 97% 取低）和最晚购买日
 - **跳变**：相邻两次读数变化 ≥ 1.5% 且 ≥ ¥80 记为一次跳涨/跳水
 - **往年同期**：`daily_price` 里去年出发日 ±3 天的去程，从"离出发同样天数"到出发前 21 天的涨跌
+- **余票**：携程往返页只在座位很少时显示"剩 N 张"（v8 起存入 `real_quote.seats_left`，没提示为空），同时记下页面上比最低价高的下一档价格 `next_price`（优先同一家航司）。现价这一档剩 ≤ 3 张时直接建议现在买；首页走势用红点标出有余票提示的读数、用点线画出下一档价格
 - **附近日期**：出发、返回各 ±3 天，按"现价 ÷ 两张单程之和"折算其他组合，省 ≥ max(¥100, 1.5%) 才列出（每个出发日一条，最多 3 条）
 
 
