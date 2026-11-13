@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -132,6 +132,10 @@ _MIGRATIONS: dict[int, str] = {
                MIN(price), MAX(price), COUNT(*)
         FROM real_quote WHERE date(observed_at, '+8 hours') IS NOT NULL
         GROUP BY origin, dest, depart_date, return_date, date(observed_at, '+8 hours');
+    """,
+    8: """
+    ALTER TABLE real_quote ADD COLUMN seats_left INTEGER;   -- 页面上最低价的"剩 N 张"，没提示为空
+    ALTER TABLE real_quote ADD COLUMN next_price REAL;      -- 页面上的下一档价格
     """,
 }
 

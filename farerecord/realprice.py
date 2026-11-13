@@ -131,6 +131,8 @@ def check(
             quote.price,
             quote.airline,
             at,
+            seats_left=quote.seats_left,
+            next_price=quote.next_price,
         )
         state.update(status="ok", price=quote.price)
     if state["status"] != "ok":
