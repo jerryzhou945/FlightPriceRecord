@@ -134,3 +134,17 @@ def test_daily_archive_survives_pruning(conn) -> None:
     ]
     real = repo.daily_prices(conn, "real", "CHI", "SHA", DEP, DEP, RET)
     assert [(r["observed_date"], r["low"], r["high"]) for r in real] == [("2026-11-12", 7125, 7325)]
+
+
+def test_few_seats_turns_watch_into_buy() -> None:
+    series = [(ts(11, 23), 7125.0), (ts(12, 3), 7325.0)]  # 涨过一次、不在低点：本来是 watch
+    a = advise(date(2026, 11, 12), DEP, RET, series, "real", seats_left=2, next_price=7525.0)
+    assert a.verdict == "buy" and "只剩 2 张" in a.headline
+    assert any("下一档 ¥7,525" in r for r in a.reasons)
+    assert (a.seats_left, a.next_price) == (2, 7525)
+    # 余票不紧张时照旧，但会说明下一档价格
+    calm = advise(date(2026, 11, 12), DEP, RET, series, "real", next_price=7525.0)
+    assert calm.verdict == "watch"
+    assert any("没有提示余票紧张" in r and "贵 ¥200" in r for r in calm.reasons)
+    # 剩得多（比如 7 张）不算紧张
+    assert advise(date(2026, 11, 12), DEP, RET, series, "real", seats_left=7).verdict == "watch"

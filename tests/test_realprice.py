@@ -346,7 +346,7 @@ def test_api_history_shows_real_prices(client) -> None:
     params = {"origin": "CHI", "dest": "SHA", "depart": depart.isoformat(), "ret": ret.isoformat()}
     real = client.get("/api/history", params=params).json()["real"]
     assert real["pinned"] and real["fresh"] and real["check"]["status"] == "ok"
-    assert real["series"][0][1:] == [7139, "土耳其航空"]
+    assert real["series"][0][1:] == [7139, "土耳其航空", None]
     assert real["stats"]["current"] == 7139
     assert real["airline"]["code"] == "TK" and real["airline"]["short"] == "土航"
     # 别的日期没有实价，也不算固定
