@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -83,6 +83,18 @@ _MIGRATIONS: dict[int, str] = {
     4: """
     ALTER TABLE oneway_quote ADD COLUMN airline_price REAL;   -- airline 这家航司当天的最低价
     UPDATE oneway_quote SET airline = NULL WHERE airline = ''; -- 旧版只查精确匹配，重新查参考价
+    """,
+    5: """
+    CREATE TABLE rt_calibration (              -- 每次抓取算出的"往返票 ÷ 两张单程之和"
+        run_id  INTEGER NOT NULL REFERENCES fetch_run(id) ON DELETE CASCADE,
+        origin  TEXT NOT NULL,
+        dest    TEXT NOT NULL,
+        ratio   REAL NOT NULL,
+        samples INTEGER NOT NULL,
+        PRIMARY KEY (run_id, origin, dest)
+    );
+    CREATE INDEX ix_oneway_run ON oneway_quote(run_id);   -- 按抓取清理旧数据时用
+    CREATE INDEX ix_rt_run ON rt_quote(run_id);
     """,
 }
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import sys
 import threading
 from collections.abc import Callable, Iterator
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
@@ -18,13 +19,22 @@ from farerecord import db, settings
 from farerecord import repository as repo
 from farerecord.airlines import airline_json
 from farerecord.alerts import recent_log, send_test
-from farerecord.alerts.notifiers import build_notifier, make_notifier
+from farerecord.alerts.notifiers import WxPusherSimpleNotifier, build_notifier, make_notifier
 from farerecord.alerts.rules import watch_trip
+from farerecord.analysis import calibration
+from farerecord.analysis.calibration import Calibration
 from farerecord.analysis.flex import FlexQuery, search, suggestions
 from farerecord.analysis.history import flex_low_history
 from farerecord.analysis.stats import PriceStats, compute
 from farerecord.collector import collect_and_alert, next_due_at
-from farerecord.config import ROOT, AppConfig, load_config, parse_quiet_hours
+from farerecord.config import (
+    MIN_INTERVAL_MINUTES,
+    ROOT,
+    AppConfig,
+    load_config,
+    parse_quiet_hours,
+)
+from farerecord.envfile import update_env_file
 from farerecord.models import OnewayQuote, PriceWatch, Trip
 from farerecord.settings import effective_config
 from farerecord.sources.base import PriceSource
@@ -58,11 +68,16 @@ def trip_json(t: Trip, origin: str, dest: str, airlines: Airlines | None = None)
         "days": t.days,
         "out": t.out_price,
         "ret": t.ret_price,
-        "price": t.price,
+        "oneway_sum": t.price,  # 分开买两张单程
+        "price": t.estimate,  # 往返预估（校准后）
         "rt_price": t.rt_price,
         "best_price": t.best_price,
         "ctrip_url": ctrip_url(origin, dest, t.depart_date, t.return_date),
     }
+
+
+def calibration_json(c: Calibration) -> dict[str, Any]:
+    return {"ratio": round(c.ratio, 4), "source": c.source, "samples": c.samples}
 
 
 def stats_json(s: PriceStats | None) -> dict[str, Any] | None:
@@ -124,6 +139,35 @@ class WatchPatch(BaseModel):
     enabled: bool | None = None
 
 
+class CollectorSettingsIn(BaseModel):
+    interval_minutes: int = Field(ge=MIN_INTERVAL_MINUTES, le=1440)
+
+
+class WechatIn(BaseModel):
+    provider: Literal["wxpusher_spt", "wxpusher", "pushplus", "off"]
+    spt: str | None = Field(default=None, max_length=200)
+    app_token: str | None = Field(default=None, max_length=200)
+    uid: str | None = Field(default=None, max_length=200)
+    token: str | None = Field(default=None, max_length=200)
+
+
+def _token(value: str | None, pattern: str, hint: str) -> str:
+    """校验口令格式；错误信息里不回显口令本身。"""
+    value = (value or "").strip()
+    if not re.fullmatch(pattern, value):
+        raise HTTPException(400, hint)
+    return value
+
+
+def wechat_provider(notifier: Any) -> str:
+    if isinstance(notifier, WxPusherSimpleNotifier):
+        return "wxpusher_spt"
+    return notifier.name
+
+
+INTERVAL_OPTIONS = [15, 30, 60, 120]  # 界面上可选的抓取间隔（分钟）
+
+
 class AlertSettingsIn(BaseModel):
     desktop: bool | None = None
     new_low: bool | None = None
@@ -140,10 +184,12 @@ def create_app(
     cfg: AppConfig | None = None,
     source_factory: Callable[[AppConfig], PriceSource] | None = None,
     web_dir: Path | None = WEB_DIR,
+    env_file: Path | None = None,
 ) -> FastAPI:
     cfg = cfg or load_config()
     app = FastAPI(title="航价记", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.cfg = cfg
+    app.state.env_file = env_file or cfg.env_file  # 微信口令写到这里
     app.state.collect_lock = threading.Lock()  # 手动抓取和定时抓取共用，避免同时请求携程
 
     def norm(origin: str, dest: str) -> tuple[str, str]:
@@ -227,7 +273,8 @@ def create_app(
             raise HTTPException(400, str(exc)) from exc
         out = repo.latest_oneway(conn, o, d)
         back = repo.latest_oneway(conn, d, o)
-        res = search(out, back, q, repo.latest_roundtrip(conn, o, d))
+        cal = calibration.current(conn, o, d)
+        res = search(out, back, q, repo.latest_roundtrip(conn, o, d), cal.ratio)
         al: Airlines = (repo.latest_airlines(conn, o, d), repo.latest_airlines(conn, d, o))
         dates = q.depart_dates
         stays = q.stays
@@ -240,9 +287,10 @@ def create_app(
         if with_history:
             hist = [
                 {"t": p.observed_at, "price": p.best.best_price, **trip_json(p.best, o, d)}
-                for p in flex_low_history(conn, o, d, q)
+                for p in flex_low_history(conn, o, d, q, cal.ratio)
             ]
         return {
+            "calibration": calibration_json(cal),
             "origin": o,
             "dest": d,
             "query": {
@@ -298,15 +346,18 @@ def create_app(
         if ret is not None and ret <= depart:
             raise HTTPException(400, "返回日期必须晚于出发日期")
         legs = None
+        cal = calibration.current(conn, o, d) if ret else Calibration()
         if ret:
             rows = repo.combo_series(conn, o, d, depart, ret)
-            series = [(t, a + b) for t, a, b in rows]
-            legs = {"out": rows[-1][1], "ret": rows[-1][2]} if rows else None
+            series = [(t, cal.apply(a + b)) for t, a, b in rows]
+            if rows:
+                legs = {"out": rows[-1][1], "ret": rows[-1][2], "sum": rows[-1][1] + rows[-1][2]}
             manual = repo.manual_quotes(conn, o, d, depart, ret)
         else:
             series = repo.oneway_series(conn, o, d, depart)
             manual = []
         return {
+            "calibration": calibration_json(cal),
             "legs": legs,
             "out_airline": airline_json(repo.latest_airlines(conn, o, d).get(depart)),
             "ret_airline": airline_json(repo.latest_airlines(conn, d, o).get(ret)) if ret else None,
@@ -325,10 +376,13 @@ def create_app(
         runs = repo.recent_runs(conn, 10)
         last_ok = next((r for r in runs if r["status"] in ("ok", "partial")), None)
         total = conn.execute("SELECT COUNT(*) FROM oneway_quote").fetchone()[0]
-        interval = cfg.collector.interval_minutes
+        collector = effective_config(conn, cfg).collector
+        interval = collector.interval_minutes
         due = next_due_at(conn, interval)
         return {
             "interval_minutes": interval,
+            "interval_options": INTERVAL_OPTIONS,
+            "retention_days": collector.retention_days,
             "next_due_at": due.isoformat() if due else None,
             "collecting": app.state.collect_lock.locked(),
             "runs": runs,
@@ -337,6 +391,12 @@ def create_app(
             "total_quotes": total,
             "n_runs": conn.execute("SELECT COUNT(*) FROM fetch_run").fetchone()[0],
         }
+
+    @app.put("/api/settings/collector")
+    def save_collector_settings(conn: Conn, body: CollectorSettingsIn) -> dict[str, Any]:
+        """界面里改抓取间隔。"""
+        settings.save(conn, settings.INTERVAL_KEY, body.interval_minutes)
+        return {"interval_minutes": effective_config(conn, cfg).collector.interval_minutes}
 
     def watch_json(conn: sqlite3.Connection, w: PriceWatch) -> dict[str, Any]:
         trip = watch_trip(conn, w)
@@ -408,6 +468,12 @@ def create_app(
             "channel_label": build_notifier(a).label,
             "configured": has_wechat and wechat.configured,
             "desktop_supported": sys.platform == "win32",
+            "wechat": {
+                "provider": wechat_provider(wechat) if has_wechat else None,
+                "configured": has_wechat and wechat.configured,
+                "can_configure": app.state.env_file is not None,
+                "spt_qr": WxPusherSimpleNotifier.QR_URL,
+            },
             "settings": {
                 "desktop": a.desktop,
                 "new_low": a.new_low,
@@ -440,6 +506,38 @@ def create_app(
             if key in sent and sent[key] is not None:
                 settings.save(conn, f"alerts.{key}", sent[key])
         return alerts(conn, body.origin, body.dest)["settings"]
+
+    @app.put("/api/alerts/wechat")
+    def save_wechat(conn: Conn, body: WechatIn) -> dict[str, Any]:
+        """界面里配置微信推送。口令写进 .env 和当前进程的环境变量，不存数据库、不返回。"""
+        env_file: Path | None = app.state.env_file
+        if body.provider == "off":
+            settings.save(conn, "alerts.channel", "console")
+            return {"provider": None, "configured": False}
+        if env_file is None:
+            raise HTTPException(400, "找不到 .env 的位置，请直接编辑 .env 文件")
+        if body.provider == "wxpusher_spt":
+            values = {
+                "WXPUSHER_SPT": _token(body.spt, r"SPT_[A-Za-z0-9]{8,}", "SPT 应以 SPT_ 开头")
+            }
+        elif body.provider == "wxpusher":
+            values = {
+                "WXPUSHER_APP_TOKEN": _token(
+                    body.app_token, r"AT_[A-Za-z0-9]{8,}", "APP_TOKEN 应以 AT_ 开头"
+                ),
+                "WXPUSHER_UID": _token(body.uid, r"UID_[A-Za-z0-9]{8,}", "UID 应以 UID_ 开头"),
+                "WXPUSHER_SPT": None,  # 有 SPT 时会优先走极简推送
+            }
+        else:
+            values = {
+                "PUSHPLUS_TOKEN": _token(
+                    body.token, r"[A-Za-z0-9]{16,64}", "PushPlus token 格式不对"
+                )
+            }
+        update_env_file(env_file, values)
+        channel = "pushplus" if body.provider == "pushplus" else "wxpusher"
+        settings.save(conn, "alerts.channel", channel)
+        return {"provider": body.provider, "configured": make_notifier(channel).configured}
 
     @app.post("/api/alerts/test")
     def test_alert(conn: Conn) -> dict[str, Any]:

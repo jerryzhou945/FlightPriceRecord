@@ -2,12 +2,12 @@
 
 记录携程机票价格，找出弹性日期里最便宜的往返组合，低价时推送到微信。
 
-- **价格走势**：每天自动记录，看近期波动和历史低点
+- **价格走势**：每 30 分钟自动记录一次（最快 15 分钟），看近期波动和历史低点
 - **低价日历**：某个方向每天的最低含税价，点日期直达携程
 - **弹性行程**：比如"12 月出发、玩 25–35 天"，算出最便宜的去回组合，并告诉你多玩或少玩几天能省多少
-- **微信提醒**：低于目标价、出现历史新低、24 小时大幅降价、抓取连续失败时推送
+- **提醒**：低于目标价、出现历史新低、24 小时大幅降价、某个组合到价时，桌面弹窗并可推送到微信
 
-> **关于往返价**：携程的往返列表页不允许自动化访问，所以这里的往返价是"去程单程最低价 + 回程单程最低价"的**估价**。实际往返票可能更便宜，也可能更贵。下单前请点"去携程核价"确认，查到的真实价格可以"录入实价"，会显示在走势图上作对照。原因详见 [docs/architecture.md](docs/architecture.md)。
+> **关于往返价**：携程公开的往返日历只有停留 14 天以内的缓存，长途行程的真实往返价要进列表页才能看到，而列表页不允许自动化访问。所以这里显示的是**往返预估**：先把去程、回程的单程最低价相加，再乘上一个校准比例——这个比例来自携程近期的真实往返票（停留 10–14 天）和同一天两张单程的对比，实测在 0.85 左右。你在携程核过价后点"录入实价"，接下来 3 天预估会改按你的实价校准。下单前请以携程为准。细节见 [docs/architecture.md](docs/architecture.md)。
 
 UI 原型：[prototype/ui-demo.html](prototype/ui-demo.html)
 
@@ -68,17 +68,15 @@ routes:
 
 ## 定时抓取
 
-桌面窗口打开时会检查是否到点，间隔由 `config.yaml` 的 `collector.interval_minutes` 控制（默认 60 分钟）。需要关掉窗口后继续记录时，在 PowerShell 里运行一次：
+抓取间隔默认 30 分钟，可以在界面"抓取"页改成 15 / 30 / 60 / 120 分钟（或改 `config.yaml` 的 `collector.interval_minutes`）。桌面窗口打开时会自己按间隔抓取；需要关掉窗口后继续记录时，在 PowerShell 里运行一次：
 
 ```bash
 powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1
 ```
 
-任务计划默认每 60 分钟运行一次 `collect --if-due`，日志写到 `logs\collect.log`。桌面端和任务计划共用数据库，同一时刻到点只抓一次。电脑关机错过的时间点会在开机后补跑。如需每两小时检查一次：
+任务计划每 15 分钟运行一次 `collect --if-due`：到了设定的间隔才真的抓，否则立刻退出。日志写到 `logs\collect.log`。桌面端和任务计划共用数据库，同一时刻到点只抓一次。电脑关机错过的时间点会在开机后补跑。
 
-```bash
-powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1 -IntervalMinutes 120
-```
+每次抓取后会清理 30 天以前的记录（`collector.retention_days`，写 0 则一直保留）。
 
 删除任务：
 
@@ -88,19 +86,13 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 ## 微信提醒
 
-默认配置使用 Windows 桌面通知。要同时推送到微信，可以配置 [WxPusher](https://wxpusher.zjiecode.com)：
+默认使用 Windows 桌面通知。要让手机也收到，打开「提醒」页，在"微信推送"一行点**设置**：
 
-1. 微信扫码登录 WxPusher 后台，新建一个应用，复制 **APP_TOKEN**
-2. 用微信扫应用的关注二维码，在"用户管理"里复制自己的 **UID**
-3. 写进 `.env`：
-   ```
-   WXPUSHER_APP_TOKEN=AT_xxxxxxxx
-   WXPUSHER_UID=UID_xxxxxxxx
-   ```
-4. `config.yaml` 里设置 `alerts.channel: wxpusher`
-5. 运行 `farerecord notify-test`，微信收到测试消息就配置好了
+- **WxPusher 扫码（推荐）**：用微信扫界面里的二维码，把收到的 `SPT_` 口令粘贴进去即可，不用注册或建应用
+- **PushPlus**：在 [pushplus.plus](https://www.pushplus.plus) 微信登录后复制 token
+- **WxPusher 应用**：在 [WxPusher 后台](https://wxpusher.zjiecode.com/admin/) 建应用，填 APP_TOKEN 和 UID
 
-也可以用 [PushPlus](https://www.pushplus.plus)：在 `.env` 填 `PUSHPLUS_TOKEN`，`alerts.channel: pushplus`。
+保存后会立刻发一条测试消息。口令只写进本机的 `.env`（不进仓库），也可以手动编辑 `.env`（见 `.env.example`）并在 `config.yaml` 里设置 `alerts.channel`。命令行测试：`farerecord notify-test`。
 
 在「提醒」页可以为某个去回组合设目标价，也可以调整桌面通知、整条航线的目标价和免打扰时段。界面设置保存在本机数据库中，优先于 `config.yaml` 的默认值。
 
@@ -116,10 +108,10 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 ## 网页看板
 
-- **总览**：所选组合的估价和 24 小时变化、在近 14 天里的价格位置、窗口内去程和回程的单段最低价
-- **价格走势**：所选组合 / 窗口最低两种曲线，标出最低点和目标价；手动录入的实价显示为菱形点
-- **低价日历**：去程、回程每天的最低价，最便宜的 20% 标绿。标有「参考」的航司有单独的起价，可在日期提示中查看
-- **弹性行程**：出发日 × 游玩天数的热力图，点格子看该组合的走势；Top 列表里如果携程有缓存的真实往返价，会一起显示
+- **总览**：以价格走势为主——所选组合的往返预估、较上次和 24 小时的涨跌、近 14 天的高低点；曲线可在"这个组合 / 窗口最低"之间切换，手动录入的实价显示为菱形点
+- **行程明细**：去程单程 + 回程单程 = 两张单程合计，以及它是怎么折算成往返预估的；各段标出航司
+- **低价日历**：去程、回程每天的单程最低价，最便宜的 20% 标绿；色标是出这个最低价的航司（淡色表示只是参考航司）
+- **弹性行程**：出发日 × 游玩天数的热力图（绿便宜、红贵），点格子看该组合的走势；Top 列表里如果携程有缓存的真实往返价，会一起显示
 - **提醒**、**抓取记录**：规则状态、最近推送、每次抓取结果
 
 ## 开发
@@ -142,4 +134,4 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
 
 ## 声明
 
-仅供个人查询价格参考。请遵守携程服务条款，保持较低的抓取频率。每条航线有 3 个基础日历请求；航司识别会按需增加查询，可通过 `collector.airline_lookups` 限制每个方向的查询数，设为 0 可关闭识别。
+仅供个人查询价格参考。请遵守携程服务条款，保持较低的抓取频率。每条航线每次抓取有 3 个基础日历请求；航司识别是额外请求，默认每 2 小时才重新识别一次（`collector.airline_refresh_minutes`），每个方向最多查 `collector.airline_lookups` 家，设为 0 可关闭。

@@ -48,34 +48,27 @@
     <div class="empty glass" id="empty" hidden>
       <div>
         <h3>还没有价格数据</h3>
-        <p>点“立即抓取”记录第一份价格。之后航价记开着的时候每小时自动抓取一次，走势会越来越完整。</p>
+        <p>点“立即抓取”记录第一份价格。之后会按设定的间隔自动抓取，走势会越来越完整。</p>
       </div>
       <button class="btn accent" id="emptyCollect" type="button">立即抓取</button>
     </div>
 
-    <div class="hero glass sheen">
-      <div class="hero-text">
-        <label class="route-pill" title="切换航线">
-          <span class="visually-hidden">航线</span>
-          <select id="routeSel" aria-label="航线"></select>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-        </label>
-        <h1><span id="heroRoute">—</span><br><span class="soft">往返</span> <span class="accent num" id="kNow">—</span></h1>
-        <p class="hero-sub" id="ovSub">—</p>
-        <p class="hero-air" id="heroAir"></p>
-        <div class="hero-actions">
-          <a class="btn accent" id="heroLink" href="#" target="_blank" rel="noopener">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 5 11 7-11 7z"/></svg>去携程核价
-          </a>
-          <button class="btn" id="heroWatch" type="button">设置提醒</button>
-          <button class="btn ghost" id="manualBtn" type="button">录入实价</button>
+    <div class="focus glass sheen">
+      <div class="focus-top">
+        <div class="focus-id">
+          <label class="route-pill" title="切换航线">
+            <span class="visually-hidden">航线</span>
+            <select id="routeSel" aria-label="航线"></select>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </label>
+          <div class="trip-line">
+            <span id="ovSub">—</span>
+            <button class="link-btn" id="changeTrip" type="button">换一个组合</button>
+          </div>
         </div>
-        <p class="fineprint"><span id="kNowDelta" class="delta" hidden></span> 估价 = 去程单程最低价 + 回程单程最低价</p>
-      </div>
-      <div class="hero-pane glass inner">
-        <div class="card-head">
+        <div class="focus-controls">
           <div class="seg" role="group" aria-label="走势类型">
-            <button type="button" data-mode="combo" aria-pressed="true">所选组合</button>
+            <button type="button" data-mode="combo" aria-pressed="true">这个组合</button>
             <button type="button" data-mode="low" aria-pressed="false">窗口最低</button>
           </div>
           <div class="seg" role="group" aria-label="时间范围">
@@ -85,54 +78,60 @@
             <button type="button" data-days="0" aria-pressed="false">全部</button>
           </div>
         </div>
-        <div class="chart" id="trend" role="img" aria-label="价格走势折线图"></div>
-        <p class="hint" id="trendHint">—</p>
       </div>
-    </div>
-
-    <div class="kpis">
-      <div class="kpi glass">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-5 4 3 8-9"/><path d="M15 6h5v5"/></svg>
-        <div class="label" id="kPctLabel">价格位置 · 近 14 天</div>
-        <div class="value" id="kPct">—</div>
-        <div class="range" aria-hidden="true"><i id="kPctMark" style="left:50%"></i></div>
-        <div class="range-ends num"><span id="kMin">—</span><span id="kMax">—</span></div>
+      <div class="price-row">
+        <span class="price-label" id="priceLabel">往返预估</span>
+        <span class="price-value num" id="kNow">—</span>
+        <span id="kNowDelta" class="delta" hidden></span>
+        <span id="kDayDelta" class="delta" hidden></span>
+        <span class="price-note" id="priceNote"></span>
       </div>
-      <div class="kpi glass">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M4.5 14.5 9 13l8.5-6.5a2 2 0 0 1 2.9 2.6L12 16l-3 .8z"/><path d="m9 13-3.5-3"/></svg>
-        <div class="label" id="kOutLabel">窗口内去程最低</div>
-        <div class="value num" id="kOut">—</div>
-        <div class="sub" id="kOutD">—</div>
+      <div class="chart big" id="trend" role="img" aria-label="价格走势折线图"></div>
+      <div class="focus-foot">
+        <div class="stat-chips" id="statChips"></div>
+        <div class="hero-actions">
+          <a class="btn accent" id="heroLink" href="#" target="_blank" rel="noopener">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 5 11 7-11 7z"/></svg>去携程核价
+          </a>
+          <button class="btn" id="manualBtn" type="button">录入实价</button>
+          <button class="btn" id="heroWatch" type="button">设置提醒</button>
+        </div>
       </div>
-      <div class="kpi glass">
-        <svg class="ico flip" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M4.5 14.5 9 13l8.5-6.5a2 2 0 0 1 2.9 2.6L12 16l-3 .8z"/><path d="m9 13-3.5-3"/></svg>
-        <div class="label" id="kRetLabel">对应回程最低</div>
-        <div class="value num" id="kRet">—</div>
-        <div class="sub" id="kRetD">—</div>
-      </div>
-      <div class="kpi glass">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
-        <div class="label">自动抓取</div>
-        <div class="value" id="kNext">—</div>
-        <div class="sub" id="kNextD">—</div>
-      </div>
+      <p class="hint" id="trendHint">—</p>
     </div>
 
     <div class="card glass">
       <div class="card-head">
-        <h3>低价日历</h3>
-        <div class="seg" role="group" aria-label="日历方向">
-          <button type="button" data-cal="out" aria-pressed="true">去程</button>
-          <button type="button" data-cal="ret" aria-pressed="false">回程</button>
+        <div class="seg" role="group" aria-label="明细切换">
+          <button type="button" data-ovtab="detail" aria-pressed="true">行程明细</button>
+          <button type="button" data-ovtab="cal" aria-pressed="false">低价日历</button>
         </div>
-        <div class="cal-nav">
-          <button class="icon-btn" id="calPrev" type="button" aria-label="上个月">‹</button>
-          <span id="calLabel" class="num">—</span>
-          <button class="icon-btn" id="calNext" type="button" aria-label="下个月">›</button>
+        <div class="cal-tools" id="calTools" hidden>
+          <div class="seg" role="group" aria-label="日历方向">
+            <button type="button" data-cal="out" aria-pressed="true">去程</button>
+            <button type="button" data-cal="ret" aria-pressed="false">回程</button>
+          </div>
+          <div class="cal-nav">
+            <button class="icon-btn" id="calPrev" type="button" aria-label="上个月">‹</button>
+            <span id="calLabel" class="num">—</span>
+            <button class="icon-btn" id="calNext" type="button" aria-label="下个月">›</button>
+          </div>
         </div>
       </div>
-      <div class="cal" id="cal"></div>
-      <div class="legend"><span class="l0">当月最便宜 20%</span><span class="l4">当月最贵 20%</span><span class="plain">“参考”表示该航司的报价高于日历价。点日期可到携程核价。</span></div>
+      <div id="ovDetail">
+        <div class="legs">
+          <div class="leg-card" id="legOut"></div>
+          <div class="leg-plus" aria-hidden="true">＋</div>
+          <div class="leg-card" id="legRet"></div>
+          <div class="leg-plus" aria-hidden="true">＝</div>
+          <div class="leg-card total" id="legTotal"></div>
+        </div>
+        <p class="explain" id="calExplain"></p>
+      </div>
+      <div id="ovCal" hidden>
+        <div class="cal" id="cal"></div>
+        <div class="legend"><span class="l0">当月最便宜 20%</span><span class="l4">当月最贵 20%</span><span class="plain">单程含税价；色标是出这个最低价的航司，淡色表示只是参考航司。点日期可到携程核价。</span></div>
+      </div>
     </div>
   </section>
 
@@ -186,7 +185,7 @@
         <div class="heat-wrap"><div class="heat" id="heat" role="img" aria-label="出发日期与游玩天数的价格热力图"></div></div>
         <div class="table-wrap">
           <table class="toplist" aria-label="最便宜的组合">
-            <thead><tr><th>出发</th><th>返回</th><th>天数</th><th class="price">去程</th><th class="price">回程</th><th class="price">估价</th><th class="price">往返实价</th><th></th></tr></thead>
+            <thead><tr><th>出发</th><th>返回</th><th>天数</th><th class="price">去程</th><th class="price">回程</th><th class="price">往返预估</th><th class="price">往返实价</th><th></th></tr></thead>
             <tbody id="top"></tbody>
           </table>
         </div>
@@ -222,6 +221,7 @@
           <div class="rule">
             <div><div class="t">微信推送</div><div class="s" id="wechatHint">—</div></div>
             <span class="pill" id="wechatPill">—</span>
+            <button class="btn sm" id="wechatBtn" type="button">设置</button>
           </div>
         </div>
       </div>
@@ -274,7 +274,7 @@
     <div class="kpis three">
       <div class="kpi glass">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
-        <div class="label">抓取间隔</div><div class="value" id="rInterval">—</div><div class="sub" id="rIntervalD">—</div>
+        <div class="label">抓取间隔</div><div class="value"><select id="intervalSel" class="plain-select" aria-label="抓取间隔"></select></div><div class="sub" id="rIntervalD">—</div>
       </div>
       <div class="kpi glass">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-14 5.3L4 15"/><path d="M4 20v-5h5"/></svg>
@@ -327,6 +327,44 @@
     <div class="dlg-actions">
       <button class="btn" type="button" id="watchCancel">取消</button>
       <button class="btn accent" type="submit">保存提醒</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="wechatDlg" class="dlg wide">
+  <form method="dialog" id="wechatForm">
+    <h3>微信推送</h3>
+    <p class="hint">价格到位时手机也能收到。口令只保存在这台电脑的 .env 文件里。</p>
+    <div class="seg full" role="group" aria-label="推送方式">
+      <button type="button" data-wx="wxpusher_spt" aria-pressed="true">WxPusher 扫码（推荐）</button>
+      <button type="button" data-wx="pushplus" aria-pressed="false">PushPlus</button>
+      <button type="button" data-wx="wxpusher" aria-pressed="false">WxPusher 应用</button>
+    </div>
+    <div class="wx-pane" data-pane="wxpusher_spt">
+      <div class="qr-row">
+        <img id="wxQr" alt="WxPusher 极简推送二维码" width="132" height="132">
+        <ol>
+          <li>用微信扫左边的二维码，按提示关注 WxPusher</li>
+          <li>它会发给你一串以 <b>SPT_</b> 开头的口令</li>
+          <li>把口令粘贴到下面，保存后会发一条测试消息</li>
+        </ol>
+      </div>
+      <div class="field"><label for="wxSpt">SPT 口令</label><input id="wxSpt" type="password" autocomplete="off" placeholder="SPT_…"></div>
+    </div>
+    <div class="wx-pane" data-pane="pushplus" hidden>
+      <p class="hint">在 <a href="https://www.pushplus.plus" target="_blank" rel="noopener">pushplus.plus</a> 用微信登录，复制“一键复制 token”。</p>
+      <div class="field"><label for="wxPlus">PushPlus token</label><input id="wxPlus" type="password" autocomplete="off"></div>
+    </div>
+    <div class="wx-pane" data-pane="wxpusher" hidden>
+      <p class="hint">在 <a href="https://wxpusher.zjiecode.com/admin/" target="_blank" rel="noopener">WxPusher 后台</a> 新建应用拿 APP_TOKEN，关注应用后在“用户管理”里复制 UID。</p>
+      <div class="field"><label for="wxApp">APP_TOKEN</label><input id="wxApp" type="password" autocomplete="off" placeholder="AT_…"></div>
+      <div class="field"><label for="wxUid">UID</label><input id="wxUid" type="text" autocomplete="off" placeholder="UID_…"></div>
+    </div>
+    <p class="form-error" id="wechatError" hidden></p>
+    <div class="dlg-actions">
+      <button class="btn ghost" type="button" id="wechatOff">关闭微信推送</button>
+      <button class="btn" type="button" id="wechatCancel">取消</button>
+      <button class="btn accent" type="submit">保存并测试</button>
     </div>
   </form>
 </dialog>

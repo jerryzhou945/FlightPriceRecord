@@ -12,6 +12,7 @@ from datetime import date, datetime, time, timedelta
 
 from farerecord import repository as repo
 from farerecord.airlines import airline_text
+from farerecord.analysis import calibration
 from farerecord.analysis.flex import FlexQuery
 from farerecord.analysis.history import flex_low_history
 from farerecord.config import AppConfig, RouteConfig
@@ -69,12 +70,15 @@ def evaluate_route(
     q = route_query(route, today)
     if q is None:
         return [], None, {}
-    points = flex_low_history(conn, route.origin, route.dest, q)
+    ratio = calibration.current(conn, route.origin, route.dest).ratio
+    points = flex_low_history(conn, route.origin, route.dest, q, ratio)
     if not points:
         return [], None, {}
     cur = points[-1].best
     price = cur.best_price
-    trip_key = f"{route.key}:{cur.depart_date}:{cur.return_date}:{price:.0f}"
+    # 去重键用不含校准的价格：校准比例慢慢变化时，同一个真实报价不会被当成新的再提醒一遍
+    raw = cur.raw_price
+    trip_key = f"{route.key}:{cur.depart_date}:{cur.return_date}:{raw:.0f}"
     alerts: list[Alert] = []
     info: dict = {}
 
@@ -84,7 +88,7 @@ def evaluate_route(
     earlier = [p.best.best_price for p in points[:-1]]
     if cfg.alerts.new_low and earlier and price < min(earlier):
         info["prev_low"] = min(earlier)
-        alerts.append(Alert("new_low", f"{route.key}:{price:.0f}", price))
+        alerts.append(Alert("new_low", f"{route.key}:{raw:.0f}", price))
 
     pct = cfg.alerts.drop_percent
     if pct > 0 and len(points) >= 2:
@@ -98,7 +102,7 @@ def evaluate_route(
             ref = before[-1].best.best_price
             if ref > 0 and (ref - price) / ref * 100 >= pct:
                 info["drop_from"] = ref
-                alerts.append(Alert("drop", f"{route.key}:{now_t.date()}:{price:.0f}", price))
+                alerts.append(Alert("drop", f"{route.key}:{now_t.date()}:{raw:.0f}", price))
     return alerts, cur, info
 
 
@@ -110,7 +114,8 @@ def watch_trip(conn: sqlite3.Connection, watch: PriceWatch) -> Trip | None:
     if not out or not back:
         return None
     rt = repo.latest_roundtrip(conn, o, d).get((watch.depart_date, watch.return_date))
-    return Trip(watch.depart_date, watch.return_date, out, back, rt)
+    ratio = calibration.current(conn, o, d).ratio
+    return Trip(watch.depart_date, watch.return_date, out, back, rt, ratio)
 
 
 def evaluate_watch(
@@ -122,7 +127,7 @@ def evaluate_watch(
     trip = watch_trip(conn, watch)
     if trip is None or trip.best_price > watch.target_price:
         return None, trip
-    return Alert("watch", f"{watch.id}:{trip.best_price:.0f}", trip.best_price), trip
+    return Alert("watch", f"{watch.id}:{trip.raw_price:.0f}", trip.best_price), trip
 
 
 def _airline_suffix(quote: OnewayQuote | None) -> str:
@@ -148,15 +153,18 @@ def build_price_message(
     lines = [
         f"### 🔻 {route.name} {head} ¥{price:,.0f}",
         "",
-        f"- 去程 {trip.depart_date:%m/%d} {_wd(trip.depart_date)} {route.origin}→{route.dest}"
-        f" ¥{trip.out_price:,.0f}{_airline_suffix(airlines[0])}",
-        f"- 回程 {trip.return_date:%m/%d} {_wd(trip.return_date)} {route.dest}→{route.origin}"
-        f" ¥{trip.ret_price:,.0f}{_airline_suffix(airlines[1])}",
-        f"- {trip.days} 天"
+        f"- {trip.depart_date:%m/%d} {_wd(trip.depart_date)} → {trip.return_date:%m/%d}"
+        f" {_wd(trip.return_date)} · {trip.days} 天"
         + (f" · 目标价 ¥{route.target_price:,.0f}" if route.target_price else ""),
     ]
     if trip.rt_price:
         lines.append(f"- 携程往返实价 ¥{trip.rt_price:,.0f}")
+    elif trip.ratio < 1:
+        lines.append(f"- 往返预估 ¥{trip.estimate:,.0f}，分开买两张单程 ¥{trip.price:,.0f}")
+    lines += [
+        f"- 去程单程 ¥{trip.out_price:,.0f}{_airline_suffix(airlines[0])}",
+        f"- 回程单程 ¥{trip.ret_price:,.0f}{_airline_suffix(airlines[1])}",
+    ]
     if "prev_low" in info:
         lines.append(f"- 此前最低 ¥{info['prev_low']:,.0f}")
     if "drop_from" in info:
@@ -164,7 +172,7 @@ def build_price_message(
     lines += [
         "",
         "触发：" + "、".join(RULE_LABELS[r] for r in rules),
-        "单程组合估价，以携程实际报价为准。",
+        "价格是按单程价推算的预估，以携程实际报价为准。",
         f"[去携程核价]({url})",
     ]
     return Message(title, "\n".join(lines), url, alerts)

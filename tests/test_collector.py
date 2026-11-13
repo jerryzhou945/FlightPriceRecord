@@ -113,5 +113,14 @@ def test_is_due_respects_interval(conn) -> None:
 
 def test_interval_has_a_floor() -> None:
     c = parse_config({"routes": [], "collector": {"interval_minutes": 5}})
-    assert c.collector.interval_minutes == 30
-    assert parse_config({"routes": []}).collector.interval_minutes == 60
+    assert c.collector.interval_minutes == 15
+    assert parse_config({"routes": []}).collector.interval_minutes == 30
+
+
+def test_interrupted_run_is_marked_failed_on_next_collect(conn) -> None:
+    stuck = repo.start_run(conn, "fake", "2026-11-10T09:00:00+00:00")  # 抓到一半程序被关了
+    fresh = repo.start_run(conn, "fake", "2026-11-10T09:55:00+00:00")  # 另一个进程刚开始抓
+    run(conn, FakeSource())  # now = 10:00
+    rows = {r["id"]: r for r in repo.recent_runs(conn)}
+    assert rows[stuck]["status"] == "failed" and "中断" in rows[stuck]["error"]
+    assert rows[fresh]["status"] == "running"  # 15 分钟以内的不动

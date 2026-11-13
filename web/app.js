@@ -33,17 +33,21 @@ function relTime(iso) {
 function ctripUrl(o, d, dep, ret) {
   return `https://flights.ctrip.com/online/list/round-${o.toLowerCase()}-${d.toLowerCase()}?depdate=${dep}_${ret}&cabin=y_s&adult=1&child=0&infant=0`;
 }
-// 航司标签：leg 是“去程 / 回程”这样的前缀，可不传
+// 航司色标：中文简称 + 代表色。exact === false 表示只是参考航司（最低价对不上单一航司）
 function airlineLabel(a) {
-  return a.exact === false ? `参考航司 ${a.name} ${yuan(a.price)} 起` : a.name;
+  return a.exact === false ? `参考航司 ${a.name}，它的起价 ${yuan(a.price)}（当天最低价可能是多家联程）` : `${a.name}（${a.code}）`;
+}
+function airBadge(a) {
+  if (!a) return "";
+  return `<span class="al${a.exact === false ? " ref" : ""}" style="--al:${esc(a.color)}" title="${esc(airlineLabel(a))}">${esc(a.short)}</span>`;
 }
 function airTag(a, leg) {
   const legHtml = leg ? `<span class="leg">${leg}</span>` : "";
   if (!a) return leg ? `<span class="air unknown">${legHtml}航司待确认</span>` : "";
-  const label = esc(airlineLabel(a));
-  return `<span class="air" title="${label}（${esc(a.code)}）"><b>${esc(a.code)}</b>${legHtml}${label}</span>`;
+  const text = a.exact === false ? `参考 ${esc(a.name)} ${yuan(a.price)} 起` : esc(a.name);
+  return `<span class="air" title="${esc(airlineLabel(a))}">${airBadge(a)}${legHtml}${text}</span>`;
 }
-const airCode = (a) => (a ? `<span class="air-code" title="${esc(airlineLabel(a))}">${a.exact === false ? "参考 " : ""}${esc(a.code)}</span>` : "");
+const airCode = airBadge;
 
 async function api(path, params, opts) {
   const qs = params ? "?" + new URLSearchParams(Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== "")) : "";
@@ -121,10 +125,6 @@ function setRoute(route) {
   $("fIdeal").value = f.ideal_days || "";
   state.calMonth = $("fStart").value.slice(0, 7);
   state.sel = null;
-  const [o, d] = [route.origin, route.dest];
-  $("heroRoute").textContent = route.name || `${o} ⇄ ${d}`;
-  $("kOutLabel").textContent = `窗口内去程最低 · ${o}→${d}`;
-  $("kRetLabel").textContent = `对应回程最低 · ${d}→${o}`;
 }
 function readForm() {
   let start = $("fStart").value, end = $("fEnd").value;
@@ -160,7 +160,6 @@ async function loadFlex() {
     const keep = state.sel && f.cells.length && f.top.concat(f.by_days).some((t) => t.depart === state.sel.depart && t.return === state.sel.return);
     if (!keep) state.sel = f.best;
     renderPlanner();
-    renderLegs();
     await loadHistory();
   } catch (e) {
     $("flexError").textContent = e.message;
@@ -260,16 +259,19 @@ function renderStatus() {
     dot.className = "dot" + (s.fail_streak ? " bad" : "");
     $("statusText").textContent = s.fail_streak ? `最近 ${s.fail_streak} 次抓取失败` : `上次抓取 ${relTime(s.last_ok_at)}`;
   }
-  const hours = s.interval_minutes / 60;
-  const every = hours === 1 ? "每小时" : Number.isInteger(hours) ? `每 ${hours} 小时` : `每 ${s.interval_minutes} 分钟`;
+  const fmtEvery = (m) => (m % 60 === 0 ? (m === 60 ? "每小时" : `每 ${m / 60} 小时`) : `每 ${m} 分钟`);
   const due = s.next_due_at ? new Date(s.next_due_at) : null;
   const overdue = !due || due.getTime() <= Date.now();
   const nextText = overdue ? "即将抓取" : fmtClock(due);
-  const nextSub = overdue ? "已到抓取时间，航价记开着就会自动抓" : `大约 ${Math.max(1, Math.round((due - Date.now()) / 60000))} 分钟后`;
-  $("kNext").textContent = every;
-  $("kNextD").textContent = s.last_ok_at ? `上次 ${fmtClock(s.last_ok_at)} · 下次 ${nextText}` : "还没有抓取过";
-  $("rInterval").textContent = every;
-  $("rIntervalD").textContent = "航价记开着时自动抓取；也可注册系统定时任务";
+  const nextSub = overdue ? "已到抓取时间" : `大约 ${Math.max(1, Math.round((due - Date.now()) / 60000))} 分钟后`;
+  if (s.last_ok_at && !s.collecting && !s.fail_streak) $("statusText").textContent = `${relTime(s.last_ok_at)}抓取 · 下次 ${nextText}`;
+  const sel = $("intervalSel");
+  if (document.activeElement !== sel) {
+    const opts = [...new Set([...(s.interval_options || []), s.interval_minutes])].sort((a, b) => a - b);
+    sel.innerHTML = opts.map((m) => `<option value="${m}">${fmtEvery(m)}</option>`).join("");
+    sel.value = String(s.interval_minutes);
+  }
+  $("rIntervalD").textContent = s.retention_days ? `自动抓取；只保留最近 ${s.retention_days} 天的记录` : "自动抓取；记录一直保留";
   $("rNext").textContent = nextText;
   $("rNextD").textContent = nextSub;
   $("rTotal").textContent = s.n_runs.toLocaleString() + " 次";
@@ -288,52 +290,77 @@ function renderStatus() {
 
 function renderHero() {
   const t = state.sel, h = state.history, s = h && h.stats;
-  const delta = $("kNowDelta");
+  const delta = $("kNowDelta"), day = $("kDayDelta");
+  const acts = ["heroLink", "heroWatch", "manualBtn"];
   if (!t) {
-    $("ovSub").textContent = state.flex && state.flex.observed_at ? "当前窗口没有可用组合，去“弹性行程”调整窗口或天数" : "还没有价格数据";
-    ["kNow", "kPct", "kMin", "kMax"].forEach((id) => ($(id).textContent = "—"));
-    $("heroAir").innerHTML = "";
-    delta.hidden = true;
-    ["heroLink", "heroWatch", "manualBtn"].forEach((id) => $(id).setAttribute("aria-disabled", "true"));
+    $("ovSub").textContent = state.flex && state.flex.observed_at ? "当前窗口没有可用组合" : "还没有价格数据";
+    $("kNow").textContent = "—";
+    ["priceNote", "statChips", "legOut", "legRet", "legTotal", "calExplain"].forEach((id) => ($(id).innerHTML = ""));
+    delta.hidden = day.hidden = true;
+    acts.forEach((id) => $(id).setAttribute("aria-disabled", "true"));
     return;
   }
-  ["heroLink", "heroWatch", "manualBtn"].forEach((id) => $(id).removeAttribute("aria-disabled"));
-  $("kNow").textContent = yuan(s ? s.current : t.best_price);
-  $("ovSub").textContent = `${md(t.depart)} ${wd(t.depart)}出发 → ${md(t.return)} ${wd(t.return)}返回 · 玩 ${t.days} 天`;
-  const outA = h ? h.out_airline : t.out_airline, retA = h ? h.ret_airline : t.ret_airline;
+  acts.forEach((id) => $(id).removeAttribute("aria-disabled"));
+  const cal = (h && h.calibration) || (state.flex && state.flex.calibration) || { ratio: 1, source: "none" };
+  const calibrated = cal.ratio < 1;
+  const cur = s ? s.current : t.best_price;
   const legs = h && h.legs;
-  $("heroAir").innerHTML =
-    airTag(outA, `去程${legs ? " " + yuan(legs.out) : ""} · `) + airTag(retA, `回程${legs ? " " + yuan(legs.ret) : ""} · `);
-  $("heroLink").href = t.ctrip_url || ctripUrl(state.route.origin, state.route.dest, t.depart, t.return);
-  if (s && s.change_24h != null && s.change_24h !== 0) {
-    delta.hidden = false;
-    delta.className = "delta " + (s.change_24h < 0 ? "down" : "up");
-    delta.textContent = (s.change_24h < 0 ? "↓ " : "↑ ") + yuan(Math.abs(s.change_24h)) + " / 24h";
-  } else {
-    delta.hidden = true;
-  }
-  if (s && s.n > 1) {
-    $("kPct").textContent = s.is_new_low ? "历史新低"
-      : s.high === s.low ? "近期价格持平"
-      : s.current >= s.high ? "近期最高点"
-      : `比 ${s.cheaper_than_pct}% 的时间便宜`;
-    $("kPctMark").style.left = (s.high === s.low ? 50 : ((s.current - s.low) / (s.high - s.low)) * 100) + "%";
-    $("kMin").textContent = yuan(s.low);
-    $("kMax").textContent = yuan(s.high);
-  } else {
-    $("kPct").textContent = "数据还少";
-    $("kPctMark").style.left = "50%";
-    $("kMin").textContent = "—";
-    $("kMax").textContent = "—";
-  }
-}
+  const [o, d] = [state.route.origin, state.route.dest];
+  $("priceLabel").textContent = calibrated ? "往返预估" : "两张单程合计";
+  $("kNow").textContent = yuan(cur);
+  $("ovSub").textContent = `${md(t.depart)} ${wd(t.depart)} → ${md(t.return)} ${wd(t.return)} · ${t.days} 天`;
+  $("heroLink").href = t.ctrip_url || ctripUrl(o, d, t.depart, t.return);
 
-function renderLegs() {
-  const l = state.flex.leg_lows || {};
-  $("kOut").textContent = l.out ? yuan(l.out.price) : "—";
-  $("kOutD").innerHTML = l.out ? `${md(l.out.date)} ${wd(l.out.date)}出发 ${airTag(l.out.airline)}` : "暂无数据";
-  $("kRet").textContent = l.ret ? yuan(l.ret.price) : "—";
-  $("kRetD").innerHTML = l.ret ? `${md(l.ret.date)} ${wd(l.ret.date)}返回 ${airTag(l.ret.airline)}` : "暂无数据";
+  // 涨跌：和上一次抓取比、和 24 小时前比
+  const series = h ? h.series : [];
+  const prev = series.length > 1 ? series[series.length - 2][1] : null;
+  const setDelta = (el, diff, suffix) => {
+    el.hidden = diff == null || diff === 0;
+    if (el.hidden) return;
+    el.className = "delta " + (diff < 0 ? "down" : "up");
+    el.textContent = `${diff < 0 ? "↓" : "↑"} ${yuan(Math.abs(diff))} ${suffix}`;
+  };
+  setDelta(delta, prev == null ? null : cur - prev, "较上次");
+  setDelta(day, s ? s.change_24h : null, "/ 24h");
+
+  const notes = [];
+  if (calibrated && legs) notes.push(`分开买两张单程 ${yuan(legs.sum)}`);
+  const lastManual = h && h.manual.length ? h.manual[h.manual.length - 1] : null;
+  if (lastManual) notes.push(`<b>你核过的实价 ${yuan(lastManual.price)}</b>（${relTime(lastManual.observed_at)}）`);
+  $("priceNote").innerHTML = notes.join(" · ");
+
+  // 近期高低点
+  const chips = [];
+  if (s && s.n > 1) {
+    const pos = s.is_new_low ? "现在是历史新低" : s.high === s.low ? "近期价格持平"
+      : s.current >= s.high ? "现在是近期最高点" : `现在比 ${s.cheaper_than_pct}% 的时间便宜`;
+    chips.push(`<span class="chip"><i>近 ${s.window_days} 天最低</i><b class="down">${yuan(s.low)}</b></span>`);
+    chips.push(`<span class="chip"><i>最高</i><b class="up">${yuan(s.high)}</b></span>`);
+    chips.push(`<span class="chip strong">${pos}</span>`);
+  } else {
+    chips.push(`<span class="chip">数据还少，自动抓取跑起来后这里会显示近期高低点</span>`);
+  }
+  $("statChips").innerHTML = chips.join("");
+
+  // 行程明细：去程 + 回程 = 两张单程 → 往返预估
+  const outA = h ? h.out_airline : t.out_airline, retA = h ? h.ret_airline : t.ret_airline;
+  const leg = (title, dateStr, from, to, price, a) => `
+    <div class="k">${title} · ${md(dateStr)} ${wd(dateStr)} · ${from}→${to}</div>
+    <div class="v num">${yuan(price)}</div>
+    <div class="s">${a ? airTag(a) : `<span class="air unknown">航司待确认</span>`}</div>`;
+  $("legOut").innerHTML = leg("去程单程", t.depart, o, d, legs ? legs.out : t.out, outA);
+  $("legRet").innerHTML = leg("回程单程", t.return, d, o, legs ? legs.ret : t.ret, retA);
+  const sum = legs ? legs.sum : t.oneway_sum;
+  $("legTotal").innerHTML = calibrated
+    ? `<div class="k">往返预估</div><div class="v num accent">${yuan(cur)}</div>
+       <div class="s">两张单程 ${yuan(sum)} × ${Math.round(cal.ratio * 100)}%</div>`
+    : `<div class="k">两张单程合计</div><div class="v num accent">${yuan(sum)}</div><div class="s">分开买两张票的价格</div>`;
+  const pct = Math.round(cal.ratio * 100);
+  $("calExplain").innerHTML = cal.source === "manual"
+    ? `往返预估是按你最近核过的真实往返价校准的：这条航线的往返票约为两张单程之和的 <b>${pct}%</b>。实际价格以携程为准。`
+    : cal.source === "cache"
+    ? `携程的公开数据里拿不到长途行程的真实往返价，这里是推算的：对比携程近期的真实往返票（停留 10–14 天）和同一天的两张单程，这条航线的往返票约为单程之和的 <b>${pct}%</b>。实际价格以携程为准——核过价后点“录入实价”，预估会改按你的实价校准。`
+    : `目前还没有足够的往返票数据来校准，显示的是分开买两张单程的合计；真实的往返票通常更便宜。核过价后点“录入实价”，预估会按你的实价校准。`;
 }
 
 function renderPlanner() {
@@ -352,8 +379,9 @@ function renderPlanner() {
     $("bestWatch").disabled = false;
   }
   $("tips").innerHTML = f.suggestions.map((s) => `<li>${esc(s)}</li>`).join("");
+  const ratioNote = f.calibration && f.calibration.ratio < 1 ? `往返预估 = 两张单程 × ${Math.round(f.calibration.ratio * 100)}%` : "价格 = 两张单程合计";
   $("heatHint").textContent = f.observed_at
-    ? `数据 ${fmtTime(f.observed_at)} · 估价 = 去程单程 + 回程单程 · 点格子选中该组合`
+    ? `数据 ${fmtTime(f.observed_at)} · ${ratioNote} · 点格子选中该组合`
     : "还没有数据";
   if (heatChart) renderHeat();
   renderTop();
@@ -383,7 +411,7 @@ function renderHeat() {
       show: vals.length > 0, min: vals.length ? Math.min(...vals) : 0, max: vals.length ? Math.max(...vals) : 1,
       orient: "horizontal", left: "center", bottom: 0, itemWidth: 10, itemHeight: 140,
       text: ["贵", "便宜"], textStyle: { color: tok("--muted"), fontSize: 11 },
-      inRange: { color: [tok("--heat-0"), tok("--heat-1"), tok("--heat-2")] },
+      inRange: { color: [tok("--heat-0"), tok("--heat-1"), tok("--heat-2"), tok("--heat-3"), tok("--heat-4")] },
     },
     series: [{ type: "heatmap", data: f.cells, itemStyle: { borderColor: tok("--heat-gap"), borderWidth: 2, borderRadius: 4 },
       emphasis: { itemStyle: { borderColor: tok("--accent"), borderWidth: 1.5 } } }],
@@ -434,7 +462,7 @@ function renderTrend() {
     const h = state.history;
     pts = h ? h.series.map(([t, p]) => [new Date(t).getTime(), p]) : [];
     manual = h ? h.manual.map((m) => [new Date(m.observed_at).getTime(), m.price, m.note || ""]) : [];
-    hint = state.sel ? `${md(state.sel.depart)} → ${md(state.sel.return)} 的往返估价，每次抓取记录一个点` : "还没有选中组合";
+    hint = state.sel ? "每次抓取记录一个点；菱形是你录入的真实往返价" : "还没有选中组合";
   } else {
     const lh = state.flex ? state.flex.low_history : [];
     pts = lh.map((p) => [new Date(p.t).getTime(), p.price, p.depart, p.return]);
@@ -451,7 +479,7 @@ function renderTrend() {
   const hourly = span <= 2 * DAY;
   const target = state.route && state.route.target_price;
   const series = [{
-    name: state.mode === "combo" ? "往返估价" : "窗口最低", type: "line", data: pts, showSymbol: pts.length < 3,
+    name: state.mode === "combo" ? "往返预估" : "窗口最低", type: "line", data: pts, showSymbol: pts.length < 3,
     symbolSize: 6, smooth: 0.12, lineStyle: { width: 2.2, color: accent }, itemStyle: { color: accent },
     areaStyle: { opacity: 0.28, color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: accent }, { offset: 1, color: "rgba(0,0,0,0)" }]) },
     markPoint: pts.length > 1 ? {
@@ -490,6 +518,8 @@ function renderTrend() {
         formatter: (v) => { const d = new Date(v); return hourly ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : `${d.getMonth() + 1}/${d.getDate()}`; } },
       splitLine: { show: false } },
     yAxis: { type: "value", scale: true, splitNumber: 4,
+      min: (v) => Math.floor((v.min - Math.max((v.max - v.min) * 0.25, v.max * 0.004, 20)) / 10) * 10,
+      max: (v) => Math.ceil((v.max + Math.max((v.max - v.min) * 0.25, v.max * 0.004, 20)) / 10) * 10,
       axisLabel: { color: tok("--muted"), formatter: (v) => yuan(v) },  // 小时级波动常常只有几十元，不能缩写成 k
       splitLine: { lineStyle: { color: tok("--grid") } } },
     series,
@@ -516,7 +546,7 @@ function renderCal(c, y, m) {
     const a = x.airline;
     const title = `${ds} ${wd(ds)} ${yuan(x.price)} · ${a ? airlineLabel(a) + " " + a.code : "航司待确认"}`;
     html += `<a class="${cls}" href="${esc(x.ctrip_url)}" target="_blank" rel="noopener" title="${esc(title)}">
-      <span class="d">${i}</span><span class="p num">${(x.price / 1000).toFixed(1)}k</span><span class="a">${a ? (a.exact === false ? "参考 " : "") + esc(a.code) : ""}</span></a>`;
+      <span class="d">${i}</span><span class="p num">${(x.price / 1000).toFixed(1)}k</span><span class="a${a && a.exact === false ? " ref" : ""}">${a ? `<i style="background:${esc(a.color)}"></i>${esc(a.short)}` : ""}</span></a>`;
   }
   $("cal").innerHTML = html;
 }
@@ -529,12 +559,13 @@ function renderAlerts(a) {
   $("sDesktop").checked = s.desktop;
   $("sDesktop").disabled = !a.desktop_supported;
   if (!a.desktop_supported) $("desktopHint").textContent = "桌面通知目前只支持 Windows";
-  const wx = { wxpusher: "WxPusher", pushplus: "PushPlus" }[a.channel];
+  const wx = { wxpusher_spt: "WxPusher 扫码", wxpusher: "WxPusher 应用", pushplus: "PushPlus" }[a.wechat.provider];
   $("wechatPill").className = "pill " + (a.configured ? "ok" : "off");
-  $("wechatPill").textContent = a.configured ? "已开启" : "未配置";
+  $("wechatPill").textContent = a.configured ? "已开启" : "未开启";
   $("wechatHint").textContent = a.configured
-    ? `通过 ${wx} 推送到微信`
-    : wx ? `config.yaml 选了 ${wx}，但 .env 里还没有填密钥` : "可选：在 config.yaml 和 .env 里配置后，手机微信也能收到（见 README）";
+    ? `通过 ${wx} 推送到手机`
+    : wx ? `选了 ${wx}，但口令还没有填` : "价格到位时手机也收到一条，点“设置”扫码就能开";
+  $("wechatBtn").textContent = a.configured ? "更换" : "设置";
   // 规则
   const active = document.activeElement;
   const setVal = (id, v) => { if ($(id) !== active) $(id).value = v ?? ""; };
@@ -732,6 +763,48 @@ function bindSettings() {
   });
 }
 
+/* ---------------- 微信推送设置 ---------------- */
+let wxProvider = "wxpusher_spt";
+function setWxProvider(p) {
+  wxProvider = p;
+  document.querySelectorAll("[data-wx]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.wx === p)));
+  document.querySelectorAll("[data-pane]").forEach((el) => (el.hidden = el.dataset.pane !== p));
+}
+function openWechat() {
+  const w = (state.alerts && state.alerts.wechat) || {};
+  if (w.can_configure === false) { toast("找不到 .env 的位置，请直接编辑 .env 文件（见 README）", true); return; }
+  if (w.spt_qr) $("wxQr").src = w.spt_qr;
+  ["wxSpt", "wxPlus", "wxApp", "wxUid"].forEach((id) => ($(id).value = ""));
+  $("wechatError").hidden = true;
+  $("wechatOff").hidden = !w.provider;
+  setWxProvider(w.provider || "wxpusher_spt");
+  $("wechatDlg").showModal();
+}
+async function saveWechat(e) {
+  e.preventDefault();
+  const body = { provider: wxProvider, spt: $("wxSpt").value, token: $("wxPlus").value, app_token: $("wxApp").value, uid: $("wxUid").value };
+  try {
+    await sendJson("/api/alerts/wechat", "PUT", body);
+  } catch (err) {
+    $("wechatError").textContent = err.message;
+    $("wechatError").hidden = false;
+    return;
+  }
+  $("wechatDlg").close();
+  try {
+    const r = await api("/api/alerts/test", null, { method: "POST" });
+    toast(`已保存，测试消息已发到：${r.channel_label}`);
+  } catch (err) {
+    toast("已保存，但测试消息没发出去：" + err.message, true);
+  }
+  loadAlerts();
+}
+async function wechatOff() {
+  try { await sendJson("/api/alerts/wechat", "PUT", { provider: "off" }); toast("已关闭微信推送"); } catch (err) { toast(err.message, true); }
+  $("wechatDlg").close();
+  loadAlerts();
+}
+
 function rerenderCharts() {
   if (state.flex && heatChart) renderHeat();
   renderTrend();
@@ -783,6 +856,24 @@ async function boot() {
   $("manualForm").addEventListener("submit", saveManual);
   $("manualCancel").addEventListener("click", () => $("manualDlg").close());
   $("heroWatch").addEventListener("click", () => openWatch());
+  $("changeTrip").addEventListener("click", () => showView("flex"));
+  bindSeg("ovtab", (v) => {
+    $("ovDetail").hidden = v !== "detail";
+    $("ovCal").hidden = $("calTools").hidden = v !== "cal";
+  });
+  $("intervalSel").addEventListener("change", async (e) => {
+    try {
+      await sendJson("/api/settings/collector", "PUT", { interval_minutes: +e.target.value });
+      toast("抓取间隔已更新");
+    } catch (err) { toast(err.message, true); }
+    e.target.blur();
+    loadStatus();
+  });
+  $("wechatBtn").addEventListener("click", openWechat);
+  $("wechatForm").addEventListener("submit", saveWechat);
+  $("wechatCancel").addEventListener("click", () => $("wechatDlg").close());
+  $("wechatOff").addEventListener("click", wechatOff);
+  document.querySelectorAll("[data-wx]").forEach((b) => b.addEventListener("click", () => setWxProvider(b.dataset.wx)));
   $("bestWatch").addEventListener("click", () => openWatch(state.flex && state.flex.best));
   $("addWatch").addEventListener("click", () => openWatch());
   $("watchForm").addEventListener("submit", saveWatch);

@@ -37,3 +37,11 @@ def toasts(monkeypatch):
     shown: list[str] = []
     monkeypatch.setattr("farerecord.alerts.notifiers.run_toast", shown.append)
     return shown
+
+
+@pytest.fixture(autouse=True)
+def clean_push_env(monkeypatch):
+    """推送口令的环境变量：每个测试从"没配置"开始，测试里写进去的结束后还原。"""
+    for key in ("WXPUSHER_SPT", "WXPUSHER_APP_TOKEN", "WXPUSHER_UID", "PUSHPLUS_TOKEN"):
+        monkeypatch.setenv(key, "x")  # 先 set 再 del，monkeypatch 才会记住原始状态
+        monkeypatch.delenv(key)

@@ -38,7 +38,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     try:
         res = collect_and_alert(conn, cfg, if_due=args.if_due, alerts=not args.no_alerts)
     except CollectionNotDue:
-        print(f"距离上次抓取不到 {cfg.collector.interval_minutes} 分钟，跳过。")
+        print("距离上次抓取还不到一个间隔，跳过。")
         return 0
     finally:
         conn.close()
@@ -71,6 +71,7 @@ def cmd_flex(args: argparse.Namespace) -> int:
     from datetime import date
 
     from farerecord import repository as repo
+    from farerecord.analysis import calibration
     from farerecord.analysis.flex import FlexQuery, search, suggestions
 
     cfg = load_config(args.config)
@@ -93,21 +94,25 @@ def cmd_flex(args: argparse.Namespace) -> int:
     back = repo.latest_oneway(conn, route.dest, route.origin)
     rt = repo.latest_roundtrip(conn, route.origin, route.dest)
     observed = repo.latest_observed_at(conn, route.origin, route.dest)
+    cal = calibration.current(conn, route.origin, route.dest)
     conn.close()
     if not out or not back:
         print("还没有数据，先运行 farerecord collect。")
         return 1
-    res = search(out, back, q, rt)
+    res = search(out, back, q, rt, cal.ratio)
     print(f"{route.name}  出发 {start:%m/%d}–{end:%m/%d}  游玩 {q.min_days}–{q.max_days} 天")
-    print(f"数据时间：{observed}（UTC） · 价格为去程单程 + 回程单程估价")
+    note = (
+        f"往返预估 = 两张单程之和 × {cal.ratio:.2f}" if cal.ratio < 1 else "往返预估 = 两张单程之和"
+    )
+    print(f"数据时间：{observed}（UTC） · {note}")
     print()
-    print(f"{'出发':<10}{'返回':<10}{'天数':>4}{'去程':>9}{'回程':>9}{'合计':>9}")
+    print(f"{'出发':<10}{'返回':<10}{'天数':>4}{'去程':>9}{'回程':>9}{'往返预估':>9}")
     for t in res.top(args.top):
         rt_mark = f"  往返实价 ¥{t.rt_price:,.0f}" if t.rt_price else ""
         print(
             f"{t.depart_date:%m/%d} {_wd(t.depart_date)}  "
             f"{t.return_date:%m/%d} {_wd(t.return_date)}  {t.days:>3}"
-            f"{t.out_price:>9,.0f}{t.ret_price:>9,.0f}{t.price:>9,.0f}{rt_mark}"
+            f"{t.out_price:>9,.0f}{t.ret_price:>9,.0f}{t.best_price:>9,.0f}{rt_mark}"
         )
     print()
     for tip in suggestions(res):
@@ -160,6 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="farerecord", description="航价记：携程机票价格记录")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("-c", "--config", help="配置文件路径（默认 config.yaml）")
+    p.add_argument("--log-file", help="把输出追加到这个文件（定时任务用）")
     sub = p.add_subparsers(dest="cmd")
 
     s = sub.add_parser("init-db", help="创建/迁移数据库")
@@ -198,10 +204,29 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+LOG_KEEP_BYTES = 200_000  # 日志超过 1 MB 时只留最后这么多
+
+
+def _log_to_file(path: str) -> None:
+    """把输出写到文件。定时任务用 pythonw 运行（不弹黑窗口），没有控制台可写。"""
+    from datetime import datetime
+    from pathlib import Path
+
+    file = Path(path)
+    file.parent.mkdir(parents=True, exist_ok=True)
+    if file.is_file() and file.stat().st_size > 1_000_000:
+        file.write_bytes(file.read_bytes()[-LOG_KEEP_BYTES:])
+    stream = file.open("a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = stream
+    print(f"--- {datetime.now():%Y-%m-%d %H:%M:%S}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    _setup_output()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.log_file:
+        _log_to_file(args.log_file)
+    _setup_output()
     if not getattr(args, "func", None):
         parser.print_help()
         return 0
