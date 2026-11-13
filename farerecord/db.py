@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -136,6 +136,9 @@ _MIGRATIONS: dict[int, str] = {
     8: """
     ALTER TABLE real_quote ADD COLUMN seats_left INTEGER;   -- 页面上最低价的"剩 N 张"，没提示为空
     ALTER TABLE real_quote ADD COLUMN next_price REAL;      -- 页面上的下一档价格
+    """,
+    9: """
+    ALTER TABLE real_quote ADD COLUMN source TEXT NOT NULL DEFAULT 'ctrip';  -- ctrip | ly（同程）
     """,
 }
 

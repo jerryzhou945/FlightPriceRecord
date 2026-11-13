@@ -23,13 +23,16 @@ from typing import Any
 from farerecord import db, settings
 from farerecord import repository as repo
 from farerecord.config import AppConfig
+from farerecord.sources import ctrip_page, ly_page
 from farerecord.sources.base import SourceError
-from farerecord.sources.ctrip_page import PageBlocked, PageEmpty, read_roundtrip
+from farerecord.sources.ctrip_page import PageBlocked, PageEmpty
 
 log = logging.getLogger(__name__)
 
 PINNED_PREFIX = "pinned_trip:"  # setting 表里：pinned_trip:CHI-SHA → {"depart", "return"}
-CHECK_PREFIX = "real_check:"  # 最近一次核价的结果
+CHECK_PREFIX = "real_check:"  # 最近一次核价的结果（携程）；同程是 real_check_ly:
+SOURCES = {"ctrip": "携程", "ly": "同程"}  # 读真实往返价的平台
+LY_ENABLED_KEY = "ly.enabled"  # 用户在界面里开了同程监测（并在桌面端窗口里登录过）
 MIN_INTERVAL_MINUTES = 15
 BLOCK_BACKOFF = timedelta(hours=6)  # 被要求登录/验证后，隔这么久才再试
 DUE_SLACK = timedelta(minutes=2)
@@ -82,9 +85,22 @@ def pinned_trips(conn: sqlite3.Connection, cfg: AppConfig, today: date) -> list[
     return [p for p in found if p and p.depart >= today]
 
 
-def check_state(conn: sqlite3.Connection, pinned: Pinned) -> dict[str, Any] | None:
-    """这个行程最近一次核价的结果；没核过（或上次核的是别的日期）返回 None。"""
-    state = settings.load(conn).get(CHECK_PREFIX + pinned.route_key)
+def check_key(pinned: Pinned, source: str = "ctrip") -> str:
+    prefix = CHECK_PREFIX if source == "ctrip" else f"real_check_{source}:"
+    return prefix + pinned.route_key
+
+
+def enabled_sources(conn: sqlite3.Connection, desktop: bool) -> tuple[str, ...]:
+    """要读哪些平台。同程要登录，只有桌面端（有登录状态的窗口）读，而且要用户开过。"""
+    on = desktop and bool(settings.load(conn).get(LY_ENABLED_KEY))
+    return ("ctrip", "ly") if on else ("ctrip",)
+
+
+def check_state(
+    conn: sqlite3.Connection, pinned: Pinned, source: str = "ctrip"
+) -> dict[str, Any] | None:
+    """这个行程在某个平台最近一次核价的结果；没核过（或上次核的是别的日期）返回 None。"""
+    state = settings.load(conn).get(check_key(pinned, source))
     return state if state and state.get("trip") == pinned.trip_key else None
 
 
@@ -93,9 +109,13 @@ def check_interval(cfg: AppConfig) -> timedelta:
 
 
 def is_due(
-    conn: sqlite3.Connection, pinned: Pinned, interval: timedelta, now: datetime | None = None
+    conn: sqlite3.Connection,
+    pinned: Pinned,
+    interval: timedelta,
+    now: datetime | None = None,
+    source: str = "ctrip",
 ) -> bool:
-    state = check_state(conn, pinned)
+    state = check_state(conn, pinned, source)
     if state is None:
         return True
     wait = BLOCK_BACKOFF if state["status"] == "blocked" else interval
@@ -103,15 +123,21 @@ def is_due(
 
 
 def check(
-    conn: sqlite3.Connection, pinned: Pinned, reader: Reader, now: datetime | None = None
+    conn: sqlite3.Connection,
+    pinned: Pinned,
+    reader: Reader,
+    now: datetime | None = None,
+    source: str = "ctrip",
 ) -> dict[str, Any]:
-    """核一次价并记下结果。返回 {at, trip, status, message, price}。"""
+    """在某个平台核一次价并记下结果。返回 {at, trip, status, message, price}。"""
     at = (now or datetime.now(UTC)).replace(microsecond=0).isoformat()
     state: dict[str, Any] = {"at": at, "trip": pinned.trip_key, "price": None, "message": None}
+    key = check_key(pinned, source)
     # 先占住这一轮：任务计划和桌面端可能同时到点，后到的看到刚核过就跳过
-    settings.save(conn, CHECK_PREFIX + pinned.route_key, {**state, "status": "running"})
+    settings.save(conn, key, {**state, "status": "running"})
+    page = ly_page if source == "ly" else ctrip_page
     try:
-        quote = read_roundtrip(reader, pinned.origin, pinned.dest, pinned.depart, pinned.ret)
+        quote = page.read_roundtrip(reader, pinned.origin, pinned.dest, pinned.depart, pinned.ret)
     except PageBlocked as exc:
         state.update(status="blocked", message=str(exc))
     except PageEmpty as exc:
@@ -119,8 +145,9 @@ def check(
     except SourceError as exc:
         state.update(status="error", message=str(exc))
     except Exception as exc:  # noqa: BLE001 — 浏览器窗口的各种意外，都要记下来而不是静默失败
-        log.exception("读取携程往返页出错")
-        state.update(status="error", message=f"读取携程往返页出错：{type(exc).__name__}")
+        name = SOURCES[source]
+        log.exception("读取%s往返页出错", name)
+        state.update(status="error", message=f"读取{name}往返页出错：{type(exc).__name__}")
     else:
         repo.add_real_quote(
             conn,
@@ -133,11 +160,14 @@ def check(
             at,
             seats_left=quote.seats_left,
             next_price=quote.next_price,
+            source=source,
         )
         state.update(status="ok", price=quote.price)
     if state["status"] != "ok":
-        log.warning("携程往返价核价未成功（%s）：%s", pinned.route_key, state["message"])
-    settings.save(conn, CHECK_PREFIX + pinned.route_key, state)
+        log.warning(
+            "%s往返价核价未成功（%s）：%s", SOURCES[source], pinned.route_key, state["message"]
+        )
+    settings.save(conn, key, state)
     return state
 
 
@@ -149,15 +179,17 @@ def run_due(
     force: bool = False,
     now: datetime | None = None,
     alerts: bool = True,
+    sources: tuple[str, ...] = ("ctrip",),
 ) -> list[dict[str, Any]]:
-    """到点的固定行程各核一次价；读到新价格后评估到价提醒。"""
+    """到点的固定行程在各平台各核一次价；读到新价格后评估到价提醒。"""
     cfg = settings.effective_config(conn, cfg)
     moment = now or datetime.now(UTC)
     interval = check_interval(cfg)
     results = [
-        check(conn, p, reader, moment)
+        {**check(conn, p, reader, moment, source), "source": source}
         for p in pinned_trips(conn, cfg, moment.astimezone().date())
-        if force or is_due(conn, p, interval, moment)
+        for source in sources
+        if force or is_due(conn, p, interval, moment, source)
     ]
     if alerts and any(r["status"] == "ok" for r in results):
         from farerecord.alerts import run_after_collect
@@ -166,13 +198,19 @@ def run_due(
     return results
 
 
-def any_due(conn: sqlite3.Connection, cfg: AppConfig, now: datetime | None = None) -> bool:
+def any_due(
+    conn: sqlite3.Connection,
+    cfg: AppConfig,
+    now: datetime | None = None,
+    sources: tuple[str, ...] = ("ctrip",),
+) -> bool:
     cfg = settings.effective_config(conn, cfg)
     moment = now or datetime.now(UTC)
     interval = check_interval(cfg)
     return any(
-        is_due(conn, p, interval, moment)
+        is_due(conn, p, interval, moment, source)
         for p in pinned_trips(conn, cfg, moment.astimezone().date())
+        for source in sources
     )
 
 
@@ -184,12 +222,14 @@ def fresh_real_price(
     ret: date,
     now: datetime | None = None,
 ) -> float | None:
-    """这个组合最近读到的真实往返价；太旧的不算。"""
-    quote = repo.latest_real_quote(conn, origin, dest, depart, ret)
-    if not quote:
-        return None
-    age = (now or datetime.now(UTC)) - datetime.fromisoformat(quote["observed_at"])
-    return quote["price"] if age <= FRESH else None
+    """这个组合最近读到的真实往返价（各平台里最便宜的那个）；太旧的不算。"""
+    moment = now or datetime.now(UTC)
+    prices = []
+    for source in SOURCES:
+        quote = repo.latest_real_quote(conn, origin, dest, depart, ret, source)
+        if quote and moment - datetime.fromisoformat(quote["observed_at"]) <= FRESH:
+            prices.append(quote["price"])
+    return min(prices) if prices else None
 
 
 class RealPriceMonitor:
@@ -207,10 +247,11 @@ class RealPriceMonitor:
     def tick(self, force: bool = False) -> list[dict[str, Any]]:
         conn = db.connect(self.cfg.database)
         try:
-            if not force and not any_due(conn, self.cfg):
+            sources = enabled_sources(conn, desktop=True)
+            if not force and not any_due(conn, self.cfg, sources=sources):
                 return []
             self.busy = True
-            return run_due(conn, self.cfg, self.reader, force=force)
+            return run_due(conn, self.cfg, self.reader, force=force, sources=sources)
         finally:
             self.busy = False
             conn.close()

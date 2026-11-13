@@ -429,11 +429,12 @@ def add_real_quote(
     observed_at: str | None = None,
     seats_left: int | None = None,
     next_price: float | None = None,
+    source: str = "ctrip",
 ) -> int:
     with conn:
         cur = conn.execute(
             "INSERT INTO real_quote (origin, dest, depart_date, return_date, price, airline, "
-            "observed_at, seats_left, next_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "observed_at, seats_left, next_price, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 origin,
                 dest,
@@ -444,35 +445,47 @@ def add_real_quote(
                 observed_at or utcnow_iso(),
                 seats_left,
                 next_price,
+                source,
             ),
         )
+        kind = "real" if source == "ctrip" else f"real_{source}"
         _archive(
             conn,
-            [("real", origin, dest, depart.isoformat(), ret.isoformat(), price)],
+            [(kind, origin, dest, depart.isoformat(), ret.isoformat(), price)],
             beijing_date(observed_at or utcnow_iso()),
         )
     return int(cur.lastrowid)
 
 
 def real_quotes(
-    conn: sqlite3.Connection, origin: str, dest: str, depart: date, ret: date
+    conn: sqlite3.Connection,
+    origin: str,
+    dest: str,
+    depart: date,
+    ret: date,
+    source: str = "ctrip",
 ) -> list[dict[str, Any]]:
-    """某个去回组合读到过的所有真实往返价，按时间升序。"""
+    """某个去回组合在某个平台读到过的所有真实往返价，按时间升序。"""
     rows = conn.execute(
         "SELECT * FROM real_quote WHERE origin=? AND dest=? AND depart_date=? AND return_date=? "
-        "ORDER BY observed_at",
-        (origin, dest, depart.isoformat(), ret.isoformat()),
+        "AND source=? ORDER BY observed_at",
+        (origin, dest, depart.isoformat(), ret.isoformat(), source),
     )
     return [dict(r) for r in rows]
 
 
 def latest_real_quote(
-    conn: sqlite3.Connection, origin: str, dest: str, depart: date, ret: date
+    conn: sqlite3.Connection,
+    origin: str,
+    dest: str,
+    depart: date,
+    ret: date,
+    source: str = "ctrip",
 ) -> dict[str, Any] | None:
     row = conn.execute(
         "SELECT * FROM real_quote WHERE origin=? AND dest=? AND depart_date=? AND return_date=? "
-        "ORDER BY observed_at DESC LIMIT 1",
-        (origin, dest, depart.isoformat(), ret.isoformat()),
+        "AND source=? ORDER BY observed_at DESC LIMIT 1",
+        (origin, dest, depart.isoformat(), ret.isoformat(), source),
     ).fetchone()
     return dict(row) if row else None
 

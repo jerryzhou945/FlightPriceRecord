@@ -105,19 +105,26 @@ def is_blocked(snap: dict[str, Any]) -> bool:
     return bool(snap.get("captcha")) and not snap.get("items")
 
 
-def parse_snapshot(snap: dict[str, Any], depart: date, ret: date) -> PageQuote:
-    """从 EXTRACT_JS 的结果里取这个行程的最低往返价。"""
+def parse_snapshot(
+    snap: dict[str, Any],
+    depart: date,
+    ret: date,
+    *,
+    site: str = "携程",
+    marker: str | None = None,
+) -> PageQuote:
+    """从读页面脚本的结果里取这个行程的最低往返价。同程的结果页（ly_page）也用它。"""
     if is_blocked(snap):
-        raise PageBlocked("携程要求登录或验证，已暂停自动核价")
-    if _dates_marker(depart, ret) not in str(snap.get("url") or ""):
-        raise PageEmpty("携程没有按这两个日期显示结果")
+        raise PageBlocked(f"{site}要求登录或验证，已暂停自动核价")
+    if (marker or _dates_marker(depart, ret)) not in str(snap.get("url") or ""):
+        raise PageEmpty(f"{site}没有按这两个日期显示结果")
     items = [
         (float(row[0]), str(row[1] or "").strip(), _seat(row))
         for row in snap.get("items") or []
         if PRICE_RANGE[0] <= float(row[0]) <= PRICE_RANGE[1]
     ]
     if not items:
-        raise PageEmpty("页面上没有读到报价（没加载完，或这两天没有航班）")
+        raise PageEmpty(f"{site}页面上没有读到报价（没加载完，或这两天没有航班）")
     # 列表默认按"直飞优先"排，而且只渲染前几行，最便宜的不一定在里面；
     # 日期条上当前日期的"低"价才是整页的最低价，有就以它为准。
     strip = [
@@ -167,6 +174,7 @@ def wait_for_quotes(
     evaluate: Callable[[str], Any],
     marker: str,
     *,
+    script: str = EXTRACT_JS,
     timeout: float = 45.0,
     poll: float = 2.0,
     settle: float = SETTLE_SECONDS,
@@ -190,7 +198,7 @@ def wait_for_quotes(
     while clock() < deadline:
         sleep(poll)
         try:
-            raw = evaluate(EXTRACT_JS)
+            raw = evaluate(script)
             current = json.loads(raw) if raw else {}
         except Exception:  # noqa: BLE001 — 页面正在跳转时执行脚本会失败，下一轮再读
             continue
@@ -220,7 +228,7 @@ class WebviewReader:
         self.webview = webview
         self.timeout = timeout
 
-    def __call__(self, url: str, marker: str) -> dict[str, Any]:
+    def __call__(self, url: str, marker: str, script: str = EXTRACT_JS) -> dict[str, Any]:
         window = self.webview.create_window(
             WINDOW_TITLE,
             url,
@@ -232,7 +240,7 @@ class WebviewReader:
         )
         window.events.shown += lambda: _keep_out_of_taskbar(window)
         try:
-            return wait_for_quotes(window.evaluate_js, marker, timeout=self.timeout)
+            return wait_for_quotes(window.evaluate_js, marker, script=script, timeout=self.timeout)
         finally:
             with contextlib.suppress(Exception):
                 window.destroy()
@@ -269,9 +277,9 @@ def standalone_session(
     )
     window.events.shown += lambda: _keep_out_of_taskbar(window)
 
-    def reader(url: str, marker: str) -> dict[str, Any]:
+    def reader(url: str, marker: str, script: str = EXTRACT_JS) -> dict[str, Any]:
         window.load_url(url)
-        return wait_for_quotes(window.evaluate_js, marker)
+        return wait_for_quotes(window.evaluate_js, marker, script=script)
 
     def run() -> None:
         try:
