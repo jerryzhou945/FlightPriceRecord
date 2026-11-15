@@ -26,7 +26,7 @@ ALERT_KEYS: dict[str, type | tuple[type, ...]] = {
 TARGET_PREFIX = "target_price:"
 INTERVAL_KEY = "collector.interval_minutes"
 EXTRA_ROUTES_KEY = "routes.extra"  # 界面里添加的航线：[{"origin", "dest"}]
-MAX_ROUTES = 4  # 每条航线每次抓取约 20 个请求，航线太多一次抓取会很久
+MAX_ROUTES = 6  # 每条航线每次抓取约 20 个请求、1 分钟左右，航线太多一次抓取会很久
 
 
 def load(conn: sqlite3.Connection) -> dict[str, Any]:

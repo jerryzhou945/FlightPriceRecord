@@ -200,7 +200,7 @@ async function openRoutes() {
         <button class="btn sm ghost" type="button" data-del="${esc(r.origin)}/${esc(r.dest)}">删除</button></div>`).join("")
     : "";
   $("routeList").querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deleteRoute(b.dataset.del)));
-  $("routeLimit").textContent = `现在监测 ${state.routes.length} 条航线，最多 4 条（每多一条，每次抓取约多 1 分钟）。`;
+  $("routeLimit").textContent = `现在监测 ${state.routes.length} 条航线，最多 6 条（每多一条，每次抓取约多 1 分钟）。`;
   $("routeError").hidden = true;
   $("routeDlg").showModal();
 }

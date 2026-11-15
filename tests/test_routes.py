@@ -42,12 +42,12 @@ def test_extra_routes_merge_into_config(conn) -> None:
 
 def test_add_route_rejects_duplicates_and_limit(conn) -> None:
     cfg = make_cfg()
-    for code in ("NYC", "LAX", "SFO"):
+    for code in ("NYC", "LAX", "SFO", "BOS", "SEA"):  # 加上配置里的 CHI 共 6 条
         settings.add_route(conn, cfg, code, "SHA")
     for o, d, msg in (
         ("CHI", "SHA", "已经在监测"),
         ("NYC", "SHA", "已经在监测"),
-        ("SEA", "SHA", "最多"),
+        ("DEN", "SHA", "最多"),
     ):
         try:
             settings.add_route(conn, cfg, o, d)
@@ -117,3 +117,13 @@ def test_collect_fetches_extra_routes(conn) -> None:
     result = collect_and_alert(conn, cfg, lambda c: source, alerts=False)
     assert set(result.per_route) == {"CHI-SHA", "NYC-SHA"}
     assert ("NYC", "SHA", "ow") in source.calls and ("SHA", "NYC", "ow") in source.calls
+
+
+def test_city_list_codes() -> None:
+    from farerecord.cities import CITY_GROUPS, CITY_NAMES
+
+    codes = [c for _, cities in CITY_GROUPS for c, _ in cities]
+    assert len(codes) == len(set(codes)) and all(len(c) == 3 and c.isupper() for c in codes)
+    # 2026-11-15 逐个查过携程低价日历：西安要用 SIA，XIY 查不到
+    assert "SIA" in CITY_NAMES and "XIY" not in CITY_NAMES
+    assert len(codes) >= 40
