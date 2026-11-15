@@ -18,15 +18,23 @@ routes:
     # 低于这个往返估价就提醒（人民币）；留空则不启用
     target_price: 7000
 
-# 提醒规则
+# 提醒规则（这里是默认值；在界面“提醒”页里改的开关和目标价会覆盖这里）
 alerts:
-  channel: wxpusher          # wxpusher | pushplus | console
+  desktop: true              # Windows 桌面通知（右下角弹窗，点击打开携程）
+  channel: console           # 微信推送：wxpusher | pushplus | console（不推微信）
+  # 最省事的办法是在界面“提醒 → 微信推送 → 设置”里扫码，它会自己写好 .env 和这个选项
   new_low: true              # 弹性窗口内最低价创历史新低
   drop_percent: 5            # 24 小时跌幅超过 5% 提醒；0 关闭
   fail_streak: 2             # 连续失败 N 次提醒；0 关闭
-  quiet_hours: "23:00-08:00" # 北京时间免打扰；留空关闭
+  quiet_hours: "23:00-08:00" # 本机时间免打扰；留空关闭
 
 # 抓取
 collector:
-  request_interval_seconds: 3
+  interval_minutes: 30        # 定时抓取间隔（分钟），最短 15；界面“抓取”页里也能改
+  retention_days: 30          # 只保留最近多少天的抓取记录；0 = 一直保留
+  request_interval_seconds: 3 # 每个请求之间的间隔（秒），不要低于 2
   timeout_seconds: 25
+  # 航司识别：匹配每天的最低价，或提供已查航司中最低的参考报价。写 [] 关闭
+  airlines: [CX, KE, PR, TK, NH, DL, UA, AA, AC, BR, JL, MU, CA, HU, OZ, CZ, EK, QR]
+  airline_lookups: 8          # 每次识别、每个方向最多额外查几家；价格没变的日期不会重复查
+  airline_refresh_minutes: 120 # 航司隔多久重新识别一次（抓取可以比它频繁，请求量不会跟着涨）

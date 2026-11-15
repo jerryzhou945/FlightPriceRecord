@@ -1,7 +1,7 @@
 from datetime import date
 
 from farerecord import repository as repo
-from farerecord.models import RoundtripQuote
+from farerecord.models import OnewayQuote, RoundtripQuote
 from tests.conftest import seed_run
 
 D1, D2, R1 = date(2026, 12, 30), date(2026, 12, 31), date(2027, 1, 29)
@@ -50,7 +50,23 @@ def test_roundtrip_and_manual(conn) -> None:
     repo.save_roundtrip(
         conn, run_id, [RoundtripQuote("CHI", "SHA", D1, date(2027, 1, 5), 6000)], "t"
     )
+    assert repo.latest_roundtrip(conn, "CHI", "SHA") == {}  # 还没抓完的不算
+    repo.finish_run(conn, run_id, "ok", 1)
     assert repo.latest_roundtrip(conn, "CHI", "SHA") == {(D1, date(2027, 1, 5)): 6000}
     repo.add_manual_quote(conn, "CHI", "SHA", D1, R1, 7100, "官网")
     rows = repo.manual_quotes(conn, "CHI", "SHA", D1, R1)
     assert rows[0]["price"] == 7100 and rows[0]["note"] == "官网"
+
+
+def test_latest_ignores_unfinished_run(conn) -> None:
+
+    seed_run(conn, "2026-11-10T00:00:00+00:00", {D1: 4000.0}, {R1: 3800.0})
+    # 下一次抓取还在进行中：去程刚存进去，回程还没抓
+    run_id = repo.start_run(conn, "test", "2026-11-10T01:00:00+00:00")
+    repo.save_oneway(
+        conn, run_id, [OnewayQuote("CHI", "SHA", D1, 9999.0)], "2026-11-10T01:00:00+00:00"
+    )
+    assert repo.latest_oneway(conn, "CHI", "SHA") == {D1: 4000.0}
+    assert repo.latest_observed_at(conn, "CHI", "SHA") == "2026-11-10T00:00:00+00:00"
+    repo.finish_run(conn, run_id, "partial", 1)
+    assert repo.latest_oneway(conn, "CHI", "SHA") == {D1: 9999.0}
