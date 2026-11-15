@@ -30,9 +30,6 @@ function relTime(iso) {
   if (m < 60 * 24) return `${Math.round(m / 60)} 小时前`;
   return `${Math.round(m / 1440)} 天前`;
 }
-function lyUrl(o, d, dep, ret) {   // 同程国际机票往返结果页（要登录同程才看得到）
-  return `https://www.ly.com/iflight/book1.html?para=${o.toUpperCase()}*${d.toUpperCase()}*${dep}*${ret}*RT*1_0_0*Y|S|C|F`;
-}
 function ctripUrl(o, d, dep, ret) {
   return `https://flights.ctrip.com/online/list/round-${o.toLowerCase()}-${d.toLowerCase()}?depdate=${dep}_${ret}&cabin=y_s&adult=1&child=0&infant=0`;
 }
@@ -159,17 +156,17 @@ function readForm() {
   return { start, end, min, max, ideal: +$("fIdeal").value || null };
 }
 
-/* ---------------- 同程 ---------------- */
-async function lyLogin() {
-  try {
-    await api("/api/ly/login", null, { method: "POST" });
-    toast("已打开同程登录窗口：在里面登录后关掉它，航价记会马上读一次同程价格");
-    if (state.status) state.status.ly_enabled = true;
-    watchReal();
-  } catch (e) {
-    toast(e.message, true);
-  }
+/* ---------------- 切换航线时先清空，避免还显示上一条航线的数据 ---------------- */
+function showLoading() {
+  state.flex = state.history = state.advice = null;
+  $("ovSub").textContent = "正在读取这条航线…";
+  $("kNow").textContent = "—";
+  ["priceNote", "statChips"].forEach((id) => ($(id).innerHTML = ""));
+  $("kNowDelta").hidden = $("kDayDelta").hidden = true;
+  $("adviceCard").hidden = true;
+  if (trendChart) trendChart.clear();
 }
+const routeKey = () => (state.route ? state.route.key : "");
 
 /* ---------------- 航线 / 出发地 ---------------- */
 function fillRouteSel(index) {
@@ -203,7 +200,7 @@ async function openRoutes() {
         <button class="btn sm ghost" type="button" data-del="${esc(r.origin)}/${esc(r.dest)}">删除</button></div>`).join("")
     : "";
   $("routeList").querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => deleteRoute(b.dataset.del)));
-  $("routeLimit").textContent = `现在监测 ${state.routes.length} 条航线，最多 4 条（每多一条，每次抓取约多 1 分钟）。`;
+  $("routeLimit").textContent = `现在监测 ${state.routes.length} 条航线，最多 6 条（每多一条，每次抓取约多 1 分钟）。`;
   $("routeError").hidden = true;
   $("routeDlg").showModal();
 }
@@ -267,8 +264,10 @@ async function loadFlex() {
   if (!q || !state.route) return;
   $("flexError").hidden = true;
   document.querySelector(".planner").classList.add("loading");
+  const key = routeKey();
   try {
     const f = await api("/api/flex", { origin: state.route.origin, dest: state.route.dest, ...q, top: 8 });
+    if (key !== routeKey()) return;   // 用户已经切到别的航线了，这个结果作废
     state.flex = f;
     const pin = pinnedTrip();
     const known = (t) => f.top.concat(f.by_days).find((x) => sameTrip(x, t));
@@ -294,10 +293,12 @@ async function loadHistory() {
     return;
   }
   const trip = { origin: state.route.origin, dest: state.route.dest, depart: t.depart, ret: t.return };
+  const key = routeKey();
   const [h, a] = await Promise.allSettled([
     api("/api/history", { ...trip, window: 14 }),
     api("/api/advice", trip),
   ]);
+  if (key !== routeKey() || t !== state.sel) return;   // 期间切了航线或换了组合
   state.history = h.status === "fulfilled" ? h.value : null;
   if (h.status === "rejected") toast(h.reason.message, true);
   state.advice = a.status === "fulfilled" ? a.value : null;
@@ -411,7 +412,7 @@ function renderHero() {
   const t = state.sel, h = state.history;
   let s = h && h.stats;
   const delta = $("kNowDelta"), day = $("kDayDelta");
-  const acts = ["heroLink", "heroLy", "heroWatch", "manualBtn"];
+  const acts = ["heroLink", "heroWatch", "manualBtn"];
   if (!t) {
     $("ovSub").textContent = state.flex && state.flex.observed_at ? "当前窗口没有可用组合" : "还没有价格数据";
     $("kNow").textContent = "—";
@@ -433,7 +434,6 @@ function renderHero() {
   $("kNow").textContent = yuan(cur);
   $("ovSub").textContent = `${md(t.depart)} ${wd(t.depart)} → ${md(t.return)} ${wd(t.return)} · ${t.days} 天`;
   $("heroLink").href = t.ctrip_url || ctripUrl(o, d, t.depart, t.return);
-  $("heroLy").href = (h && h.ly && h.ly.url) || lyUrl(o, d, t.depart, t.return);
   const pin = pinnedTrip(), onPin = isPinnedSel();
   $("pinChip").hidden = !onPin;
   $("pinThis").hidden = onPin;
@@ -469,30 +469,18 @@ function renderHero() {
     else if (!real) notes.push(monitor ? "正在读取携程往返实价…" : "携程往返实价由桌面端窗口或系统定时任务读取");
     else if (!real.fresh) notes.push(`<span class="warn">实价已经不新了，桌面端开着时会自动更新</span>`);
   }
-  // 同程：和携程并排对比（要在桌面端登录过同程）
-  const ly = h && h.ly, lyCheck = ly && ly.check;
-  if (ly && ly.series.length) {
-    const lp = ly.stats.current, at = ly.series[ly.series.length - 1][0];
-    const diff = cur != null ? cur - lp : 0;
-    const cmp = !real ? "" : diff > 0 ? `，<b class="down">比携程便宜 ${yuan(diff)}</b>` : diff < 0 ? `，比携程贵 ${yuan(-diff)}` : "，和携程一样";
-    const seats = ly.seats_left != null ? ` · <span class="warn">余 ${ly.seats_left} 张</span>` : "";
-    notes.push(`<span class="src-tag">同程</span><b>${yuan(lp)}</b>${cmp}（${relTime(at)}${ly.fresh ? "" : "，已不新"}）${seats} · <a href="${esc(ly.url)}" target="_blank" rel="noopener">去同程</a>`);
-  }
-  if (ly && ly.enabled && lyCheck && !["ok", "running"].includes(lyCheck.status)) {
-    const login = lyCheck.status === "blocked" && state.status && state.status.ly_login;
-    notes.push(`<span class="warn">${esc(lyCheck.message || "同程价格没有读到")}</span>${login ? ` <button class="link-btn" type="button" data-act="ly-login">登录同程</button>` : ""}`);
-  } else if (ly && !ly.enabled && rinfo && rinfo.pinned && state.status && state.status.ly_login) {
-    notes.push(`<button class="link-btn" type="button" data-act="ly-login">＋ 同时监测同程</button>`);
-  }
   const lastManual = h && h.manual.length ? h.manual[h.manual.length - 1] : null;
   if (lastManual) notes.push(`<b>你核过的实价 ${yuan(lastManual.price)}</b>（${relTime(lastManual.observed_at)}）`);
   $("priceNote").innerHTML = notes.join(" · ");
 
-  // 近期高低点
+  // 近期高低点：跟着走势图走——"窗口最低"时显示窗口最低价的高低点
   const chips = [];
+  const low = state.mode === "low" && state.flex && state.flex.low_stats;
+  if (low) s = low;
   if (s && s.n > 1) {
     const pos = s.is_new_low ? "现在是历史新低" : s.high === s.low ? "近期价格持平"
       : s.current >= s.high ? "现在是近期最高点" : `现在比 ${s.cheaper_than_pct}% 的时间便宜`;
+    if (low) chips.push(`<span class="chip"><i>窗口最低现在</i><b>${yuan(s.current)}</b></span>`);
     chips.push(`<span class="chip"><i>近 ${s.window_days} 天最低</i><b class="down">${yuan(s.low)}</b></span>`);
     chips.push(`<span class="chip"><i>最高</i><b class="up">${yuan(s.high)}</b></span>`);
     chips.push(`<span class="chip strong">${pos}</span>`);
@@ -565,23 +553,6 @@ function renderAdvice() {
   const btn = $("adWatch");
   btn.hidden = !a.target;
   if (a.target) btn.textContent = `降到 ${yuan(a.target)} 时提醒我`;
-
-  // 哪家更稳妥：携程（蓝）和同程（绿）并排，标出推荐的那家
-  const pf = a.platforms;
-  $("adPlatforms").hidden = !pf;
-  if (pf) {
-    const cls = { 携程: "ctrip", 同程: "ly" };
-    $("adPlatforms").innerHTML = `<div class="k">哪家更稳妥</div>
-      <div class="pf-row">${pf.rows.map((r) => `
-        <div class="pf ${cls[r.site] || ""}${r.site === pf.pick ? " picked" : ""}">
-          <div class="pf-head"><span class="pf-name">${esc(r.site)}</span>${r.site === pf.pick ? `<span class="pf-badge">推荐</span>` : ""}</div>
-          <div class="pf-price num">${yuan(r.price)}</div>
-          <div class="pf-meta">24 小时 ${yuan(r.low_24h)}–${yuan(r.high_24h)} · 跳动 ${r.jumps_24h} 次</div>
-          <div class="pf-meta">${relTime(r.observed_at)}读取${r.fresh ? "" : " · 已不新"}</div>
-        </div>`).join("")}</div>
-      <p class="pf-reason">${esc(pf.reason)}</p>
-      ${pf.checklist.length ? `<ul class="pf-check">${pf.checklist.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}`;
-  }
 
   const alts = a.alternatives || [];
   $("adAlts").hidden = !alts.length;
@@ -698,8 +669,8 @@ function renderTop() {
 function renderTrend() {
   if (!trendChart) return;
   const accent = tok("--accent"), down = tok("--down"), up = tok("--up");
-  const ctripLine = tok("--ctrip-line"), lyLine = tok("--ly-line");   // 携程蓝、同程绿
-  let pts = [], hint, manual = [], mainName = "往返预估", nextPrice = null, lyPts = [];
+  const ctripLine = tok("--ctrip-line");   // 携程实价用蓝线
+  let pts = [], hint, manual = [], mainName = "往返预估", nextPrice = null, seatPts = [];
   if (state.mode === "combo") {
     const h = state.history, real = realOf(h);
     pts = h ? h.series.map(([t, p]) => [new Date(t).getTime(), p]) : [];
@@ -710,23 +681,24 @@ function renderTrend() {
       mainName = "携程往返实价";
       hint = "每个点是一次从携程往返订票页读到的真实往返价（等页面搜索完成后读取）；红点是携程提示了余票，虚线是页面上的下一档价格";
       nextPrice = real.next_price && real.next_price > real.stats.current ? real.next_price : null;
-      if (h.ly && h.ly.series.length) {
-        lyPts = h.ly.series.map(([t, p, a, seats]) => [new Date(t).getTime(), p, a || "", seats ?? null]);
-        hint += "；蓝线是携程，绿线是同程";
-      }
     }
   } else {
+    // 窗口最低：每次抓取时弹性窗口里最便宜的那个组合（组合会变，悬停能看到是哪两天）
     const lh = state.flex ? state.flex.low_history : [];
     pts = lh.map((p) => [new Date(p.t).getTime(), p.price, p.depart, p.return]);
-    hint = "每次抓取时，弹性窗口内最便宜组合的价格";
+    const q = state.flex && state.flex.query, last = lh[lh.length - 1];
+    hint = q ? `每次抓取时，${md(q.start)}–${md(q.end)} 出发、玩 ${q.min}–${q.max} 天里最便宜的组合（往返预估）` : "每次抓取时，弹性窗口内最便宜组合的价格";
+    if (last) hint += `；现在最便宜的是 ${md(last.depart)}→${md(last.return)} ${yuan(last.price)}`;
     mainName = "窗口最低";
   }
+  // 余票红点只在携程实价走势里有；窗口最低的第 4 项是返回日期，不是张数
+  if (mainName === "携程往返实价") seatPts = pts.filter((p) => p[3] != null);
   if (state.days && pts.length) {
     const end = pts[pts.length - 1][0];
     const recent = (p) => p[0] >= end - state.days * DAY;
     pts = pts.filter(recent);
     manual = manual.filter(recent);
-    lyPts = lyPts.filter(recent);
+    seatPts = seatPts.filter(recent);
   }
   if (pts.length < 2) hint += " · 数据还少，多抓几次就能看到走势";
   $("trendHint").textContent = hint;
@@ -734,9 +706,11 @@ function renderTrend() {
   const hourly = span <= 2 * DAY;
   const target = state.route && state.route.target_price;
   const lineColor = mainName === "携程往返实价" ? ctripLine : accent;
+  const lowMode = mainName === "窗口最低";
   const series = [{
     name: mainName, type: "line", data: pts, showSymbol: pts.length < 3,
-    symbolSize: 6, smooth: 0.12, lineStyle: { width: 2.2, color: lineColor }, itemStyle: { color: lineColor },
+    // 窗口最低用阶梯线：两次抓取之间价格不变，组合换了也一眼看得出跳变
+    symbolSize: 6, smooth: lowMode ? false : 0.12, step: lowMode ? "end" : false, lineStyle: { width: 2.2, color: lineColor }, itemStyle: { color: lineColor },
     areaStyle: { opacity: 0.22, color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: lineColor }, { offset: 1, color: "rgba(0,0,0,0)" }]) },
     markPoint: pts.length > 1 ? {
       symbol: "circle", symbolSize: 9, itemStyle: { color: down, borderColor: tok("--bg"), borderWidth: 2 },
@@ -754,15 +728,13 @@ function renderTrend() {
       ].filter(Boolean),
     } : undefined,
   }];
-  if (lyPts.length) {
-    series.push({ name: "同程实价", type: "line", data: lyPts, showSymbol: lyPts.length < 3, symbolSize: 5, smooth: 0.12,
-      lineStyle: { width: 2.2, color: lyLine }, itemStyle: { color: lyLine } });
-  }
-  const seatPts = pts.filter((p) => p[3] != null);
   if (seatPts.length) {
-    series.push({ name: "余票提示", type: "scatter", data: seatPts, symbolSize: 9,
+    const lastSeat = seatPts[seatPts.length - 1][0];
+    series.push({ name: "余票提示", type: "scatter", data: seatPts, symbolSize: 8,
       itemStyle: { color: up, borderColor: tok("--bg"), borderWidth: 1.5 },
-      label: { show: true, position: "top", color: up, fontSize: 11, fontWeight: 600, formatter: (p) => `剩${p.value[3]}张` } });
+      // 只给最近一个红点写字，其余的悬停看，免得标签挤成一片
+      label: { show: true, position: "top", color: up, fontSize: 11, fontWeight: 600,
+        formatter: (p) => (p.value[0] === lastSeat ? `剩${p.value[3]}张` : "") } });
   }
   if (manual.length) {
     series.push({ name: "手动核价", type: "scatter", data: manual, symbol: "diamond", symbolSize: 11,
@@ -780,8 +752,8 @@ function renderTrend() {
         const rows = ps.map((x) => {
           const extra = x.seriesName === "窗口最低" && x.value[2] ? ` <span style="opacity:.6">${md(x.value[2])}→${md(x.value[3])}</span>` : "";
           if (x.seriesName === "余票提示") return "";
-          const note = ["手动核价", "携程往返实价", "同程实价"].includes(x.seriesName) && x.value[2] ? ` <span style="opacity:.6">${esc(x.value[2])}</span>` : "";
-          const seats = ["携程往返实价", "同程实价"].includes(x.seriesName) && x.value[3] != null ? ` <b style="color:${up}">剩 ${x.value[3]} 张</b>` : "";
+          const note = ["手动核价", "携程往返实价"].includes(x.seriesName) && x.value[2] ? ` <span style="opacity:.6">${esc(x.value[2])}</span>` : "";
+          const seats = x.seriesName === "携程往返实价" && x.value[3] != null ? ` <b style="color:${up}">剩 ${x.value[3]} 张</b>` : "";
           return `${x.marker}${x.seriesName} <b>${yuan(x.value[1])}</b>${extra}${note}${seats}`;
         });
         return [head, ...rows.filter(Boolean)].join("<br>");
@@ -1179,7 +1151,7 @@ async function boot() {
   trendChart = echarts.init($("trend"), null, { renderer: "svg" });
   addEventListener("resize", () => { trendChart.resize(); if (heatChart) heatChart.resize(); });
 
-  bindSeg("mode", (v) => { state.mode = v; renderTrend(); });
+  bindSeg("mode", (v) => { state.mode = v; renderTrend(); renderHero(); });
   bindSeg("days", (v) => { state.days = +v; renderTrend(); });
   bindSeg("cal", (v) => {
     state.calDir = v;
@@ -1208,7 +1180,6 @@ async function boot() {
   $("routeCancel").addEventListener("click", () => $("routeDlg").close());
   $("rOrigin").addEventListener("change", () => { $("rCodeField").hidden = $("rOrigin").value !== "other"; });
   $("adWatch").addEventListener("click", () => state.advice && openWatch(null, state.advice.target));
-  $("priceNote").addEventListener("click", (e) => { if (e.target.closest("[data-act=ly-login]")) lyLogin(); });
   $("changeTrip").addEventListener("click", () => showView("flex"));
   $("editTrip").addEventListener("click", openTrip);
   $("tripForm").addEventListener("submit", saveTrip);
@@ -1272,6 +1243,7 @@ async function boot() {
       return;
     }
     setRoute(state.routes[+sel.value]);
+    showLoading();
     loadAll();
   });
   setRoute(state.routes[0]);

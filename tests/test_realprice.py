@@ -114,6 +114,7 @@ def test_wait_for_quotes_waits_for_the_search_to_finish() -> None:
         json.dumps({**early, "loading": True}),  # 价格没变，但进度条还在走 → 不算数
         json.dumps(final),  # 搜完了，价格变成最终的
         json.dumps(final),  # 再读一次确认没再变
+        json.dumps(final),  # 连续三次一样才算加载完
         json.dumps(snap(items=[[1, "不该读到这里"]])),
     ]
     clock = iter(range(100))
@@ -394,3 +395,22 @@ def test_check_saves_seats(tmp_path) -> None:
     realprice.check(conn, PIN, reader_of(s), NOW)
     q = repo.latest_real_quote(conn, "CHI", "SHA", D, R)
     assert (q["price"], q["seats_left"], q["next_price"]) == (7125, 2, 7325)
+
+
+def test_unsettled_page_is_not_recorded() -> None:
+    import json
+
+    # 价格一直在变：超时后 settled=False，解析时不记这次
+    reads: list[int] = []
+
+    def evaluate(js: str) -> str:
+        reads.append(1)
+        return json.dumps(snap(items=[[7100 + len(reads), "土耳其航空"]], tabs=[]))
+
+    ticks = iter(range(0, 1000, 5))
+    got = wait_for_quotes(
+        evaluate, "depdate=", timeout=60, sleep=lambda s: None, clock=lambda: next(ticks)
+    )
+    assert got["settled"] is False
+    with pytest.raises(PageEmpty, match="没等到加载完"):
+        parse_snapshot(got, D, R)

@@ -25,7 +25,6 @@
   --orb-blue: rgba(64, 96, 190, 0.34);
   --down: #8fe6c4;
   --ctrip-line: #6aa8ff;  /* 走势图：携程蓝 */
-  --ly-line: #4fd99a;     /* 走势图：同程绿 */
   --down-soft: rgba(143, 230, 196, 0.14);
   --up: #ff9f9f;
   --up-soft: rgba(255, 159, 159, 0.13);
@@ -66,7 +65,6 @@
   --orb-blue: rgba(120, 160, 240, 0.3);
   --down: #0d8f63;
   --ctrip-line: #2b6fd6;
-  --ly-line: #11935f;
   --down-soft: rgba(13, 143, 99, 0.12);
   --up: #cf4a4a;
   --up-soft: rgba(207, 74, 74, 0.10);
@@ -520,27 +518,5 @@ footer { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padd
 .route-item .btn { margin-left: auto; }
 .field select option, .field select optgroup { color: var(--fg); background: var(--glass-solid); }
 
-/* ---------- 同程对比 ---------- */
-.src-tag { display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--ly-line); background: var(--down-soft); }
-.price-note b.down { color: var(--down); }
-.price-note a { color: inherit; }
 
-/* ---------- 哪家更稳妥 ---------- */
-.platforms { margin-top: 16px; display: grid; gap: 8px; }
-.platforms .k { font-size: 12px; color: var(--muted); }
-.pf-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.pf { padding: 12px 14px; border-radius: var(--r-md); border: 1px solid var(--stroke-soft); background: var(--field); border-top: 3px solid var(--pf, var(--stroke)); }
-.pf.ctrip { --pf: var(--ctrip-line); }
-.pf.ly { --pf: var(--ly-line); }
-.pf.picked { border-color: var(--pf); box-shadow: 0 0 0 1px var(--pf) inset; }
-.pf-head { display: flex; align-items: center; gap: 8px; }
-.pf-name { font-weight: 600; color: var(--pf); }
-.pf-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; color: var(--accent-ink); background: var(--pf); }
-.pf-price { margin: 4px 0 2px; font-family: var(--font-display); font-size: 22px; font-weight: 600; }
-.pf-meta { font-size: 12px; color: var(--muted); }
-.pf-reason { margin: 2px 0 0; font-size: 13px; color: var(--fg); line-height: 1.6; }
-.pf-check { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); line-height: 1.7; }
-@media (max-width: 680px) { .pf-row { grid-template-columns: 1fr; } }
 
-.btn.ly-btn { color: var(--ly-line); border-color: color-mix(in srgb, var(--ly-line) 45%, transparent); }
-.btn.ly-btn:hover { background: var(--down-soft); }

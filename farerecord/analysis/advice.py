@@ -218,7 +218,6 @@ def advise(
     last_year: LastYear | None = None,
     seats_left: int | None = None,
     next_price: float | None = None,
-    elsewhere: list[tuple[str, float]] | None = None,
 ) -> Advice:
     """series：这个组合按时间升序的 (UTC ISO, 价格)，实价优先，没有就用往返预估。"""
     days_left = (depart - today).days
@@ -273,15 +272,6 @@ def advise(
             f"携程没有提示余票紧张；页面上下一档是 {_yuan(next_price)}（贵 {step}），"
             "这一档卖完多半会跳到那里。"
         )
-    for site, price in elsewhere or []:  # 别的平台同一行程的实价
-        if current and price < current:
-            reasons.append(
-                f"{site}同一行程现在 {_yuan(price)}，比携程便宜 {_yuan(current - price)}。"
-            )
-        elif current and price > current:
-            reasons.append(
-                f"{site}同一行程现在 {_yuan(price)}，比携程贵 {_yuan(price - current)}。"
-            )
     if last_year:
         pct = last_year.change_pct * 100
         trend = "基本没变"
@@ -348,103 +338,3 @@ def advise(
         seats_left=seats_left,
         next_price=next_price,
     )
-
-
-# ---------- 平台对比：同一行程在携程、同程的实价，哪家更稳妥 ----------
-
-BIG_GAP_YUAN = 200  # 差价至少这么多（或 3%）才值得换平台
-BIG_GAP_PCT = 0.03
-SMALL_GAP_YUAN = 100  # 差价不到这么多，就用常用的平台
-
-
-@dataclass(frozen=True)
-class PlatformView:
-    site: str
-    price: float
-    observed_at: str
-    low_24h: float
-    high_24h: float
-    jumps_24h: int  # 过去 24 小时相邻读数的明显涨跌次数（见 find_jumps）
-    fresh: bool  # 最近一次读数还新（3 小时内）
-
-
-@dataclass(frozen=True)
-class PlatformPick:
-    pick: str
-    reason: str
-    checklist: list[str]
-    rows: list[PlatformView]
-
-
-def platform_view(
-    site: str, series: list[tuple[str, float]], now: datetime, depart: date, fresh_hours: float = 3
-) -> PlatformView | None:
-    """series：按时间升序的 (UTC ISO, 价格)。"""
-    if not series:
-        return None
-    t_last, price = series[-1]
-    day = [(t, p) for t, p in series if now - datetime.fromisoformat(t) <= timedelta(hours=24)]
-    day = day or series[-1:]
-    prices = [p for _, p in day]
-    age = now - datetime.fromisoformat(t_last)
-    return PlatformView(
-        site=site,
-        price=price,
-        observed_at=t_last,
-        low_24h=min(prices),
-        high_24h=max(prices),
-        jumps_24h=len(find_jumps(day, depart)),
-        fresh=age <= timedelta(hours=fresh_hours),
-    )
-
-
-def pick_platform(
-    ctrip: PlatformView | None, other: PlatformView | None, usual: str = "携程"
-) -> PlatformPick | None:
-    """两家都有价格时给出推荐。看两点：差价够不够大、便宜的那家价格稳不稳。
-
-    两家都是大平台，真正的区别在出票的代理商和退改规则——列表页上看不到，
-    所以推荐便宜那家时，一定附上下单前要核对的清单。
-    """
-    if ctrip is None or other is None:
-        return None
-    rows = [ctrip, other]
-    check = [
-        "进到付款前最后一页，确认总价没有变",
-        "看清退改签规则和行李额（便宜的产品常常退改更严）",
-        "出票后用票号到航空公司官网的“管理预订”里核实已出票",
-    ]
-    if not other.fresh:
-        return PlatformPick(usual, f"{other.site}的价格超过 3 小时没更新，以携程为准。", [], rows)
-    gap = ctrip.price - other.price
-    big = max(BIG_GAP_YUAN, ctrip.price * BIG_GAP_PCT)
-    if gap >= big:
-        return PlatformPick(
-            other.site,
-            f"{other.site}便宜 {_yuan(gap)}，差价够大，值得在{other.site}买。",
-            check,
-            rows,
-        )
-    if gap >= SMALL_GAP_YUAN:
-        if other.jumps_24h <= ctrip.jumps_24h:
-            return PlatformPick(
-                other.site,
-                f"{other.site}便宜 {_yuan(gap)}，过去 24 小时价格也不比携程跳得多，"
-                f"可以选{other.site}。",
-                check,
-                rows,
-            )
-        return PlatformPick(
-            usual,
-            f"{other.site}只便宜 {_yuan(gap)}，但过去 24 小时跳动 {other.jumps_24h} 次"
-            f"（携程 {ctrip.jumps_24h} 次），价格不稳，携程更稳妥。",
-            [],
-            rows,
-        )
-    if gap > 0:
-        why = f"{other.site}只便宜 {_yuan(gap)}，差价很小"
-    elif gap == 0:
-        why = "两家一样价"
-    else:
-        why = f"携程反而便宜 {_yuan(-gap)}"
-    return PlatformPick(usual, f"{why}，选你常用的携程，售后更省心。", [], rows)

@@ -23,16 +23,15 @@ from typing import Any
 from farerecord import db, settings
 from farerecord import repository as repo
 from farerecord.config import AppConfig
-from farerecord.sources import ctrip_page, ly_page
+from farerecord.sources import ctrip_page
 from farerecord.sources.base import SourceError
 from farerecord.sources.ctrip_page import PageBlocked, PageEmpty
 
 log = logging.getLogger(__name__)
 
 PINNED_PREFIX = "pinned_trip:"  # setting 表里：pinned_trip:CHI-SHA → {"depart", "return"}
-CHECK_PREFIX = "real_check:"  # 最近一次核价的结果（携程）；同程是 real_check_ly:
-SOURCES = {"ctrip": "携程", "ly": "同程"}  # 读真实往返价的平台
-LY_ENABLED_KEY = "ly.enabled"  # 用户在界面里开了同程监测（并在桌面端窗口里登录过）
+CHECK_PREFIX = "real_check:"  # 最近一次核价的结果
+SOURCES = {"ctrip": "携程"}  # 读真实往返价的平台（2026-11-15 起只保留携程）
 MIN_INTERVAL_MINUTES = 15
 BLOCK_BACKOFF = timedelta(hours=6)  # 被要求登录/验证后，隔这么久才再试
 DUE_SLACK = timedelta(minutes=2)
@@ -90,12 +89,6 @@ def check_key(pinned: Pinned, source: str = "ctrip") -> str:
     return prefix + pinned.route_key
 
 
-def enabled_sources(conn: sqlite3.Connection, desktop: bool) -> tuple[str, ...]:
-    """要读哪些平台。同程要登录，只有桌面端（有登录状态的窗口）读，而且要用户开过。"""
-    on = desktop and bool(settings.load(conn).get(LY_ENABLED_KEY))
-    return ("ctrip", "ly") if on else ("ctrip",)
-
-
 def check_state(
     conn: sqlite3.Connection, pinned: Pinned, source: str = "ctrip"
 ) -> dict[str, Any] | None:
@@ -135,7 +128,7 @@ def check(
     key = check_key(pinned, source)
     # 先占住这一轮：任务计划和桌面端可能同时到点，后到的看到刚核过就跳过
     settings.save(conn, key, {**state, "status": "running"})
-    page = ly_page if source == "ly" else ctrip_page
+    page = ctrip_page
     try:
         quote = page.read_roundtrip(reader, pinned.origin, pinned.dest, pinned.depart, pinned.ret)
     except PageBlocked as exc:
@@ -247,11 +240,10 @@ class RealPriceMonitor:
     def tick(self, force: bool = False) -> list[dict[str, Any]]:
         conn = db.connect(self.cfg.database)
         try:
-            sources = enabled_sources(conn, desktop=True)
-            if not force and not any_due(conn, self.cfg, sources=sources):
+            if not force and not any_due(conn, self.cfg):
                 return []
             self.busy = True
-            return run_due(conn, self.cfg, self.reader, force=force, sources=sources)
+            return run_due(conn, self.cfg, self.reader, force=force)
         finally:
             self.busy = False
             conn.close()

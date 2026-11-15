@@ -30,6 +30,7 @@ from farerecord.sources.base import SourceError
 WINDOW_TITLE = "航价记 · 携程核价"
 OFFSCREEN = -30000  # 窗口放在屏幕外：页面要"可见"才会加载，但不该打扰用户
 SETTLE_SECONDS = 14.0  # 认不出搜索进度条时，报价出现后至少再等这么久
+STABLE_READS = 3  # 进度条走完后，连续这么多次读到一模一样的报价才算加载完
 PRICE_RANGE = (200, 300_000)  # 读到这个范围以外的数字，多半是读错了
 
 # 读页面上已经渲染出来的内容：每个航班行的价格、航司和余票提示（携程只在座位很少时
@@ -113,7 +114,7 @@ def parse_snapshot(
     site: str = "携程",
     marker: str | None = None,
 ) -> PageQuote:
-    """从读页面脚本的结果里取这个行程的最低往返价。同程的结果页（ly_page）也用它。"""
+    """从读页面脚本的结果里取这个行程的最低往返价。"""
     if is_blocked(snap):
         url = str(snap.get("url") or "")
         if "passport." in url or "/login" in url:
@@ -128,6 +129,8 @@ def parse_snapshot(
     ]
     if not items:
         raise PageEmpty(f"{site}页面上没有读到报价（没加载完，或这两天没有航班）")
+    if snap.get("settled") is False:
+        raise PageEmpty(f"{site}页面上的价格一直在变，没等到加载完，这次不记")
     # 列表默认按"直飞优先"排，而且只渲染前几行，最便宜的不一定在里面；
     # 日期条上当前日期的"低"价才是整页的最低价，有就以它为准。
     strip = [
@@ -187,8 +190,9 @@ def wait_for_quotes(
     """反复读页面，直到报价出齐、被拦住或超时。返回最后一次读到的内容。
 
     携程是边搜边显示的：先出一批价格，几秒后搜索进度条走完，价格才变成最终的
-    （实测先显示 ¥7,133，6 秒后变成 ¥7,125）。所以要等进度条结束，并且连续两次读到的
-    价格一样才算数。万一页面改版认不出进度条，就在报价出现后至少再等 settle 秒。
+    （实测先显示 ¥7,133，6 秒后变成 ¥7,125）。所以要等进度条结束，并且连续 STABLE_READS 次
+    读到的报价（每一行、日期条）完全一样才算数。万一页面改版认不出进度条，就在报价出现后
+    至少再等 settle 秒。超时还没稳定下来的，结果里 settled=False，这次不记。
 
     evaluate：在页面里执行一段脚本并返回结果；marker：目标页面网址里应有的日期片段，
     用来跳过"上一个页面还没换掉"的瞬间。
@@ -196,6 +200,7 @@ def wait_for_quotes(
     deadline = clock() + timeout
     snap: dict[str, Any] = {}
     previous: Any = None
+    same = 0  # 连续几次读到和上一次一样的报价
     first_seen: float | None = None
     saw_progress = False
     while clock() < deadline:
@@ -217,28 +222,28 @@ def wait_for_quotes(
         now = clock()
         first_seen = now if first_seen is None else first_seen
         prices = (snap.get("items"), snap.get("tabs"))
-        steady = prices == previous
+        same = same + 1 if prices == previous else 0
         previous = prices
-        if steady and not loading and (saw_progress or now - first_seen >= settle):
-            break
-    return snap
+        if (
+            same >= STABLE_READS - 1
+            and not loading
+            and (saw_progress or now - first_seen >= settle)
+        ):
+            return {**snap, "settled": True}
+    return {**snap, "settled": False} if snap else snap
 
 
 class WebviewReader:
     """用 pywebview 开一个屏幕外的窗口来读页面。桌面端窗口开着时用（webview 已经启动）。"""
 
-    def __init__(self, webview: Any, timeout: float = 45.0, ly_session: Path | None = None) -> None:
+    def __init__(self, webview: Any, timeout: float = 45.0) -> None:
         self.webview = webview
         self.timeout = timeout
-        self.ly_session = ly_session  # 存同程登录状态的文件（见 farerecord/ly_session.py）
 
     def __call__(self, url: str, marker: str, script: str = EXTRACT_JS) -> dict[str, Any]:
-        remember = self.ly_session is not None and "ly.com/" in url
         window = self.webview.create_window(
             WINDOW_TITLE,
-            # 同程：先开空白页，把上次的登录状态放回去，再打开结果页
-            html="<!doctype html><title>航价记</title>" if remember else None,
-            url=None if remember else url,
+            url,
             x=OFFSCREEN,
             y=OFFSCREEN,
             width=1280,
@@ -247,16 +252,7 @@ class WebviewReader:
         )
         window.events.shown += lambda: _keep_out_of_taskbar(window)
         try:
-            if remember:
-                from farerecord import ly_session
-
-                window.events.loaded.wait(15)
-                ly_session.restore_into_window(window, self.ly_session)
-                window.load_url(url)
-            snap = wait_for_quotes(window.evaluate_js, marker, script=script, timeout=self.timeout)
-            if remember and snap.get("items") and not is_blocked(snap):
-                ly_session.save_from_window(window, self.ly_session)
-            return snap
+            return wait_for_quotes(window.evaluate_js, marker, script=script, timeout=self.timeout)
         finally:
             with contextlib.suppress(Exception):
                 window.destroy()

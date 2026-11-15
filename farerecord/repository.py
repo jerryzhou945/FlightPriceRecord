@@ -181,11 +181,17 @@ def save_roundtrip(
     return len(rows)
 
 
+FINISHED = ("ok", "partial")  # 抓完了的抓取；还在进行中的不用，免得只抓了一半的数据混进来
+
+
 def _latest_run_for(conn: sqlite3.Connection, table: str, origin: str, dest: str) -> int | None:
+    """这个方向最近一次"已经抓完"的抓取里有数据的那一次。"""
     row = conn.execute(
-        f"SELECT MAX(run_id) FROM {table} WHERE origin=? AND dest=?", (origin, dest)
+        f"SELECT q.run_id FROM {table} q JOIN fetch_run r ON r.id = q.run_id "
+        "WHERE q.origin=? AND q.dest=? AND r.status IN (?, ?) ORDER BY q.run_id DESC LIMIT 1",
+        (origin, dest, *FINISHED),
     ).fetchone()
-    return row[0]
+    return row[0] if row else None
 
 
 def latest_oneway(conn: sqlite3.Connection, origin: str, dest: str) -> dict[date, float]:
@@ -225,8 +231,12 @@ def latest_airlines(conn: sqlite3.Connection, origin: str, dest: str) -> dict[da
 
 
 def latest_observed_at(conn: sqlite3.Connection, origin: str, dest: str) -> str | None:
+    run_id = _latest_run_for(conn, "oneway_quote", origin, dest)
+    if run_id is None:
+        return None
     row = conn.execute(
-        "SELECT MAX(observed_at) FROM oneway_quote WHERE origin=? AND dest=?", (origin, dest)
+        "SELECT MAX(observed_at) FROM oneway_quote WHERE run_id=? AND origin=? AND dest=?",
+        (run_id, origin, dest),
     ).fetchone()
     return row[0]
 
@@ -281,11 +291,12 @@ def combo_series(
 
 
 def runs_with_route(conn: sqlite3.Connection, origin: str, dest: str) -> list[tuple[int, str]]:
-    """包含该方向数据的所有抓取 (run_id, observed_at)，按时间升序。"""
+    """包含该方向数据、已经抓完的所有抓取 (run_id, observed_at)，按时间升序。"""
     rows = conn.execute(
-        "SELECT run_id, MIN(observed_at) AS t FROM oneway_quote WHERE origin=? AND dest=? "
-        "GROUP BY run_id ORDER BY t",
-        (origin, dest),
+        "SELECT * FROM (SELECT r.id AS run_id, (SELECT q.observed_at FROM oneway_quote q "
+        "WHERE q.origin=? AND q.dest=? AND q.run_id=r.id LIMIT 1) AS t "
+        "FROM fetch_run r WHERE r.status IN (?, ?)) WHERE t IS NOT NULL ORDER BY t",
+        (origin, dest, *FINISHED),
     )
     return [(r["run_id"], r["t"]) for r in rows]
 
