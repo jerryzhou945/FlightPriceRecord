@@ -113,7 +113,7 @@ def parse_snapshot(
     site: str = "携程",
     marker: str | None = None,
 ) -> PageQuote:
-    """从读页面脚本的结果里取这个行程的最低往返价。同程的结果页（ly_page）也用它。"""
+    """从读页面脚本的结果里取这个行程的最低往返价。"""
     if is_blocked(snap):
         url = str(snap.get("url") or "")
         if "passport." in url or "/login" in url:
@@ -227,18 +227,14 @@ def wait_for_quotes(
 class WebviewReader:
     """用 pywebview 开一个屏幕外的窗口来读页面。桌面端窗口开着时用（webview 已经启动）。"""
 
-    def __init__(self, webview: Any, timeout: float = 45.0, ly_session: Path | None = None) -> None:
+    def __init__(self, webview: Any, timeout: float = 45.0) -> None:
         self.webview = webview
         self.timeout = timeout
-        self.ly_session = ly_session  # 存同程登录状态的文件（见 farerecord/ly_session.py）
 
     def __call__(self, url: str, marker: str, script: str = EXTRACT_JS) -> dict[str, Any]:
-        remember = self.ly_session is not None and "ly.com/" in url
         window = self.webview.create_window(
             WINDOW_TITLE,
-            # 同程：先开空白页，把上次的登录状态放回去，再打开结果页
-            html="<!doctype html><title>航价记</title>" if remember else None,
-            url=None if remember else url,
+            url,
             x=OFFSCREEN,
             y=OFFSCREEN,
             width=1280,
@@ -247,16 +243,7 @@ class WebviewReader:
         )
         window.events.shown += lambda: _keep_out_of_taskbar(window)
         try:
-            if remember:
-                from farerecord import ly_session
-
-                window.events.loaded.wait(15)
-                ly_session.restore_into_window(window, self.ly_session)
-                window.load_url(url)
-            snap = wait_for_quotes(window.evaluate_js, marker, script=script, timeout=self.timeout)
-            if remember and snap.get("items") and not is_blocked(snap):
-                ly_session.save_from_window(window, self.ly_session)
-            return snap
+            return wait_for_quotes(window.evaluate_js, marker, script=script, timeout=self.timeout)
         finally:
             with contextlib.suppress(Exception):
                 window.destroy()
