@@ -196,6 +196,7 @@ def test_migrate_v3_retries_unknown_airline_and_keeps_known_match() -> None:
         "INSERT INTO oneway_quote VALUES (?, 'CHI', 'SHA', ?, 4000, 't', ?)",
         [(run_id, "2026-12-01", ""), (run_id, "2026-12-02", "KE")],
     )
+    repo.finish_run(conn, run_id, "ok", 2)
     db.migrate(conn)
     detail = repo.latest_oneway_detail(conn, "CHI", "SHA")
     missing, known = detail[date(2026, 12, 1)], detail[date(2026, 12, 2)]

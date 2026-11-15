@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _MIGRATIONS: dict[int, str] = {
     1: """
@@ -139,6 +139,11 @@ _MIGRATIONS: dict[int, str] = {
     """,
     9: """
     ALTER TABLE real_quote ADD COLUMN source TEXT NOT NULL DEFAULT 'ctrip';  -- ctrip | ly（同程）
+    """,
+    10: """
+    -- 找"某方向最近一次抓完的数据"时按 (航线, run_id) 倒着找，不用扫整张表
+    CREATE INDEX ix_oneway_route_run ON oneway_quote(origin, dest, run_id);
+    CREATE INDEX ix_rt_route_run ON rt_quote(origin, dest, run_id);
     """,
 }
 
