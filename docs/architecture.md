@@ -105,7 +105,7 @@ fetch_run      (id, source, started_at, finished_at, status, error, n_quotes)
 oneway_quote   (run_id, origin, dest, depart_date, price, observed_at, airline, airline_price)
 rt_quote       (run_id, origin, dest, depart_date, return_date, price, observed_at)  -- 往返缓存
 manual_quote   (id, origin, dest, depart_date, return_date, price, note, observed_at) -- 手动核价
-real_quote     (id, origin, dest, depart_date, return_date, price, airline, observed_at, seats_left, next_price, source) -- 往返页读到的实价、余票提示、下一档价格；source = ctrip | ly（同程）
+real_quote     (id, origin, dest, depart_date, return_date, price, airline, observed_at, seats_left, next_price, source) -- 携程往返页读到的实价、余票提示、下一档价格；source 现在只有 ctrip（M14 的同程 ly 已于 M15 移除，旧数据不再显示）
 alert_log      (id, rule, dedupe_key, price, channel, status, message, sent_at)
 price_watch    (id, origin, dest, depart_date, return_date, target_price, enabled, created_at)
 setting        (key, value)   -- 界面覆盖的配置（JSON）
@@ -117,7 +117,8 @@ daily_price    (kind, origin, dest, depart_date, return_date, observed_date, low
 - 任意组合的历史走势 = 对每次抓取（run）取 `(out[d] + ret[r]) × 校准比例`，不需要单独存组合
 - `rt_calibration (run_id, origin, dest, ratio, samples)`：每次抓取算出的"真实往返价 ÷ 两张单程之和"（只用停留 ≥ 10 天的缓存组合，至少 8 个样本）
 - 界面里添加的航线存在 `setting`：`routes.extra → [{origin, dest}]`，和 config.yaml 的航线合并（`settings.effective_config`），弹性窗口沿用第一条航线，最多共 4 条；删除只停止抓取、取消固定行程、停用到价提醒，已抓到的价格保留
-- 同程（v9 起 `real_quote.source='ly'`）：用户开启（`setting` 的 `ly.enabled`）并在桌面端的登录窗口里登录后，桌面端的后台窗口和携程一样按抓取间隔打开 `ly.com/iflight/book1.html?para=O*D*去*回*RT*…` 读页面；核价结果存 `real_check_ly:CHI-SHA`。任务计划的后台窗口用另一个数据目录、没有登录状态，不读同程。同程登录用会话 Cookie（WebView2 退出即清），所以每次成功读价后把 www.ly.com 的 Cookie 存到 `data/ly_session.json`，下次读同程前先开空白页、经 CoreWebView2.CookieManager 放回，再打开结果页（`farerecord/ly_session.py`）；`DELETE /api/ly` 时删除。到价提醒取携程、同程里更便宜且 3 小时内读到的实价
+- "最新数据"一律取**已经抓完**（`fetch_run.status` 为 ok / partial）的那次抓取：`repository._latest_run_for`、`runs_with_route` 都会跳过正在进行中的抓取，免得只抓了一个方向的数据混进弹性行程和走势。v10 加了 `oneway_quote(origin, dest, run_id)`、`rt_quote(origin, dest, run_id)` 索引，首页接口从 3 秒多降到 0.3 秒以内
+- 携程往返页读价：进度条走完后要**连续 3 次**读到一模一样的报价（每一行和日期条）才算加载完；超时还在变的标 `settled=false`，这次不记（`PageEmpty`）
 - 固定的行程存在 `setting`：`pinned_trip:CHI-SHA → {depart, return}`；最近一次核价的结果存在 `real_check:CHI-SHA → {at, trip, status: ok|blocked|empty|error|running, message, price}`
 - `fetch_run` 超过 `retention_days` 的记录连同报价一起清理（`real_quote` 也按同样的期限清理）；停在 running 超过 15 分钟的记录在下次抓取时标为 failed
 - `daily_price` 是每天的价格留档：`kind=oneway` 为日历单程最低价，`kind=real` 为携程往返实价；`observed_date` 是北京时间日期，`low/high/n` 是当天的最低、最高、次数。写报价时顺手合并，**不随旧抓取清理**，用于和往年同期对比（v7 升级时用已有报价回填）
@@ -135,7 +136,6 @@ daily_price    (kind, origin, dest, depart_date, return_date, observed_date, low
 - **跳变**：相邻两次读数变化 ≥ 1.5% 且 ≥ ¥80 记为一次跳涨/跳水
 - **往年同期**：`daily_price` 里去年出发日 ±3 天的去程，从"离出发同样天数"到出发前 21 天的涨跌
 - **余票**：携程往返页只在座位很少时显示"剩 N 张"（v8 起存入 `real_quote.seats_left`，没提示为空），同时记下页面上比最低价高的下一档价格 `next_price`（优先同一家航司）。现价这一档剩 ≤ 3 张时直接建议现在买；首页走势用红点标出有余票提示的读数、用点线画出下一档价格
-- **哪家更稳妥**（`pick_platform`）：携程、同程都有新鲜实价时比较。同程便宜 ≥ max(¥200, 3%) → 推荐同程并附下单前核对清单；便宜 ¥100–200 → 同程过去 24 小时跳动不多于携程才推荐同程，否则携程；差价 < ¥100 或携程更便宜 → 推荐常用的携程；同程价格超过 3 小时没更新 → 以携程为准。`/api/advice` 的 `platforms` 字段
 - **附近日期**：出发、返回各 ±3 天，按"现价 ÷ 两张单程之和"折算其他组合，省 ≥ max(¥100, 1.5%) 才列出（每个出发日一条，最多 3 条）
 
 
@@ -195,7 +195,6 @@ daily_price    (kind, origin, dest, depart_date, return_date, observed_date, low
 | GET | `/api/history?origin&dest&depart&return&days` | 组合（或单程）价格历史序列 + 统计；`real` 里是携程往返实价的序列、统计和最近一次核价结果 |
 | GET | `/api/advice?origin&dest&depart&ret` | 买还是等：结论（buy / watch / wait）、理由、建议最晚购买日、涨价节点、值得等的价位、监测期间的跳变、附近更便宜的日期、去年同期（有留档时） |
 | PUT | `/api/pinned` | 固定（或取消固定）首页的行程 |
-| POST / DELETE | `/api/ly/login`、`/api/ly` | 开启同程监测并在桌面端弹出同程登录窗口（用户自己登录）；关闭同程监测 |
 | POST | `/api/real-check` | 让桌面端马上去携程往返订票页核一次价（没有桌面端时返回 409） |
 | GET | `/api/status` | 最近抓取记录、成功率、下次抓取时间 |
 | POST | `/api/manual-quote` | 手动录入真实往返价 |
